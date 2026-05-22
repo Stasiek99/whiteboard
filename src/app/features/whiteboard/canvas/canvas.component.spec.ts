@@ -6,7 +6,14 @@ import { CanvasComponent } from './canvas.component';
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function makeCtxMock(): Partial<CanvasRenderingContext2D> {
+  // canvas property needed so CanvasEngine.toPhysical() can read width/height
+  // without throwing when rendering is triggered by action commits in tests.
+  const canvas = document.createElement('canvas');
+  canvas.width = 800;
+  canvas.height = 600;
+
   return {
+    canvas,
     setTransform: vi.fn(),
     clearRect: vi.fn(),
     beginPath: vi.fn(),
@@ -21,12 +28,14 @@ function makeCtxMock(): Partial<CanvasRenderingContext2D> {
     ellipse: vi.fn(),
     save: vi.fn(),
     restore: vi.fn(),
+    setLineDash: vi.fn(),
     strokeStyle: '',
     fillStyle: '',
     lineWidth: 0,
     lineCap: 'round',
     lineJoin: 'round',
     globalCompositeOperation: 'source-over',
+    globalAlpha: 1,
   } as unknown as Partial<CanvasRenderingContext2D>;
 }
 
@@ -211,6 +220,115 @@ describe('CanvasComponent', () => {
       resizeCallback([], new ResizeObserver(() => {}));
 
       expect(ctxMock.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+    });
+
+    it('applies the 2x DPI transform to both the main and overlay canvas', () => {
+      vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(2);
+      (ctxMock.setTransform as ReturnType<typeof vi.fn>).mockClear();
+
+      resizeCallback([], new ResizeObserver(() => {}));
+
+      // setupDpi() is called once for the main canvas and once for the overlay.
+      // Both share the same ctxMock (getContext is mocked globally), so
+      // setTransform must be called exactly twice — mismatched DPI on either
+      // canvas would cause shape preview misalignment on retina displays.
+      expect(ctxMock.setTransform).toHaveBeenCalledTimes(2);
+      expect(ctxMock.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+    });
+  });
+
+  // ── Test 7: SHAPE action committed when rect/ellipse tool is active ───────
+
+  describe('SHAPE action', () => {
+    it('commits action with type SHAPE, normalized from/to, and from !== to', () => {
+      service.tool$.set('rect');
+      const canvas = fixture.debugElement.query(By.css('canvas')).nativeElement as HTMLCanvasElement;
+
+      // clientX/Y at 100,100 → normalized (0.125, 0.167); drag to 400,300 → (0.5, 0.5)
+      canvas.dispatchEvent(pointerEvent('pointerdown', { clientX: 100, clientY: 100 }));
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 400, clientY: 300 }));
+      canvas.dispatchEvent(pointerEvent('pointerup',  { clientX: 400, clientY: 300 }));
+
+      const actions = service.actions$.getValue();
+      expect(actions).toHaveLength(1);
+      expect(actions[0].type).toBe('SHAPE');
+
+      const action = actions[0];
+      if (action.type !== 'SHAPE') return;
+
+      for (const coord of [action.from.x, action.from.y, action.to.x, action.to.y]) {
+        expect(coord).toBeGreaterThanOrEqual(0);
+        expect(coord).toBeLessThanOrEqual(1);
+      }
+      expect(action.from.x).not.toBeCloseTo(action.to.x, 3);
+      expect(action.from.y).not.toBeCloseTo(action.to.y, 3);
+    });
+
+    it('does not commit a SHAPE when the pointer is released without a meaningful drag', () => {
+      service.tool$.set('rect');
+      const canvas = fixture.debugElement.query(By.css('canvas')).nativeElement as HTMLCanvasElement;
+
+      canvas.dispatchEvent(pointerEvent('pointerdown', { clientX: 300, clientY: 200 }));
+      canvas.dispatchEvent(pointerEvent('pointerup',  { clientX: 300, clientY: 200 }));
+
+      expect(service.actions$.getValue()).toHaveLength(0);
+    });
+  });
+
+  // ── Test 8: mid-stroke tool switch ───────────────────────────────────────
+
+  describe('mid-stroke tool switch', () => {
+    it('locks the action type to the tool active at pointerdown, not at pointerup', () => {
+      service.tool$.set('pen');
+      const canvas = fixture.debugElement.query(By.css('canvas')).nativeElement as HTMLCanvasElement;
+
+      canvas.dispatchEvent(pointerEvent('pointerdown', { clientX: 100, clientY: 100 }));
+
+      // Switch tool while the pointer is still down
+      service.tool$.set('eraser');
+
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 150 }));
+      canvas.dispatchEvent(pointerEvent('pointerup',  { clientX: 200, clientY: 200 }));
+
+      const actions = service.actions$.getValue();
+      expect(actions).toHaveLength(1);
+      // Type is captured at pointerdown — switching mid-stroke must not inject
+      // destination-out composite into a stroke that started as a pen action.
+      expect(actions[0].type).toBe('STROKE');
+    });
+  });
+
+  // ── Test 9: eraser — known MVP limitation ────────────────────────────────
+
+  describe('eraser — known MVP limitation', () => {
+    it('undo is strictly LIFO: cannot remove a stroke independently of a later erase', () => {
+      const canvas = fixture.debugElement.query(By.css('canvas')).nativeElement as HTMLCanvasElement;
+
+      // Draw a stroke
+      service.tool$.set('pen');
+      canvas.dispatchEvent(pointerEvent('pointerdown', { clientX: 100, clientY: 100 }));
+      canvas.dispatchEvent(pointerEvent('pointerup',  { clientX: 300, clientY: 100 }));
+
+      // Apply eraser over the stroke
+      service.tool$.set('eraser');
+      canvas.dispatchEvent(pointerEvent('pointerdown', { clientX: 150, clientY: 100 }));
+      canvas.dispatchEvent(pointerEvent('pointerup',  { clientX: 250, clientY: 100 }));
+
+      expect(service.actions$.getValue().map(a => a.type)).toEqual(['STROKE', 'ERASE']);
+
+      // Undo removes in LIFO order only
+      service.undo();
+      expect(service.actions$.getValue().map(a => a.type)).toEqual(['STROKE']);
+
+      service.undo();
+      expect(service.actions$.getValue()).toHaveLength(0);
+
+      // Known MVP limitation: it is impossible to undo a stroke that was drawn
+      // before an erase while keeping the erase in the log. Any out-of-order
+      // removal (e.g. via network sync in Phase 3) would replay the erase against
+      // an empty canvas — the destination-out has nothing to cut through, so the
+      // "erased" region is not transparent. Post-MVP fix: scene graph or
+      // per-stroke clip paths.
     });
   });
 });
