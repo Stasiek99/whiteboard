@@ -99,6 +99,21 @@ export class CanvasEngine {
     this.ctx.restore();
   }
 
+  /** Renders a dashed circle at the given point sized to the eraser width. */
+  renderEraserCursor(point: Point, width: number): void {
+    const { canvas } = this.ctx;
+    const p = this.toPhysical(point, canvas);
+
+    this.ctx.save();
+    this.ctx.strokeStyle = 'rgba(80, 80, 80, 0.75)';
+    this.ctx.lineWidth = 1;
+    this.ctx.setLineDash([3, 3]);
+    this.ctx.beginPath();
+    this.ctx.arc(p.x, p.y, Math.max(width / 2, 1), 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.restore();
+  }
+
   private clear(): void {
     const dpr = window.devicePixelRatio || 1;
     const { canvas } = this.ctx;
