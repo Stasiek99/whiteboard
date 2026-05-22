@@ -1,12 +1,10 @@
-import { Component, signal } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
+import { Component } from '@angular/core';
+import { CanvasComponent } from './features/whiteboard/canvas/canvas.component';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet],
-  templateUrl: './app.html',
-  styleUrl: './app.css'
+  imports: [CanvasComponent],
+  template: `<app-canvas />`,
+  styles: [`:host { display: block; width: 100%; height: 100dvh; }`],
 })
-export class App {
-  protected readonly title = signal('whiteboard');
-}
+export class App {}
