@@ -1,5 +1,4 @@
 import {
-  ClearAction,
   DrawAction,
   EraseAction,
   Point,
@@ -64,6 +63,55 @@ export class CanvasEngine {
       case 'SHAPE':  this.drawShape(action);  break;
       case 'CLEAR':  this.clear();            break;
     }
+  }
+
+  /**
+   * Renders a shape action as a dashed, semi-transparent outline.
+   * Used by the overlay canvas during an active drag to show the
+   * in-progress shape without it looking like a committed stroke.
+   */
+  renderShapePreview(action: ShapeAction): void {
+    const { from, to, color, width, shape } = action;
+    const { canvas } = this.ctx;
+
+    const f = this.toPhysical(from, canvas);
+    const t = this.toPhysical(to, canvas);
+    const x = Math.min(f.x, t.x);
+    const y = Math.min(f.y, t.y);
+    const w = Math.abs(t.x - f.x);
+    const h = Math.abs(t.y - f.y);
+
+    this.ctx.save();
+    this.ctx.globalAlpha = 0.65;
+    this.ctx.strokeStyle = color;
+    this.ctx.lineWidth = width;
+    this.ctx.setLineDash([6, 4]);
+    this.ctx.lineCap = 'round';
+
+    if (shape === 'rect') {
+      this.ctx.strokeRect(x, y, w, h);
+    } else {
+      this.ctx.beginPath();
+      this.ctx.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      this.ctx.stroke();
+    }
+
+    this.ctx.restore();
+  }
+
+  /** Renders a dashed circle at the given point sized to the eraser width. */
+  renderEraserCursor(point: Point, width: number): void {
+    const { canvas } = this.ctx;
+    const p = this.toPhysical(point, canvas);
+
+    this.ctx.save();
+    this.ctx.strokeStyle = 'rgba(80, 80, 80, 0.75)';
+    this.ctx.lineWidth = 1;
+    this.ctx.setLineDash([3, 3]);
+    this.ctx.beginPath();
+    this.ctx.arc(p.x, p.y, Math.max(width / 2, 1), 0, Math.PI * 2);
+    this.ctx.stroke();
+    this.ctx.restore();
   }
 
   private clear(): void {

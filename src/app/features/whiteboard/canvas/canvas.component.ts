@@ -6,10 +6,11 @@ import {
   OnDestroy,
   OnInit,
   ViewChild,
+  computed,
   inject,
 } from '@angular/core';
 import { Subscription } from 'rxjs';
-import { DrawAction, EraseAction, ShapeAction, StrokeAction } from '../../../core/models/action.model';
+import { DrawAction, EraseAction, Point, ShapeAction, StrokeAction } from '../../../core/models/action.model';
 import { WhiteboardService } from '../whiteboard.service';
 import { CanvasEngine } from './canvas.engine';
 
@@ -18,7 +19,7 @@ import { CanvasEngine } from './canvas.engine';
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <canvas #main style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+    <canvas #main [style.cursor]="activeTool() === 'eraser' ? 'none' : 'crosshair'" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
     <canvas #overlay style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></canvas>
   `,
   styles: [`:host { display: block; position: relative; width: 100%; height: 100%; }`],
@@ -31,10 +32,13 @@ export class CanvasComponent implements OnInit, OnDestroy {
   private readonly service = inject(WhiteboardService);
   private readonly host = inject(ElementRef<HTMLElement>);
 
+  protected readonly activeTool = computed(() => this.service.tool$());
+
   private mainEngine!: CanvasEngine;
   private overlayEngine!: CanvasEngine;
 
   private inProgress: StrokeAction | EraseAction | ShapeAction | null = null;
+  private cursorPoint: Point | null = null;
   private dirty = false;
   private rafId = 0;
   private resizeObserver!: ResizeObserver;
@@ -79,15 +83,18 @@ export class CanvasComponent implements OnInit, OnDestroy {
       const onMove = (e: PointerEvent) => this.onPointerMove(e);
       const onUp = (e: PointerEvent) => this.onPointerUp(e);
       const onCancel = (e: PointerEvent) => this.onPointerCancel(e);
+      const onLeave = () => { this.cursorPoint = null; this.dirty = true; };
 
       canvas.addEventListener('pointermove', onMove);
       canvas.addEventListener('pointerup', onUp);
       canvas.addEventListener('pointercancel', onCancel);
+      canvas.addEventListener('pointerleave', onLeave);
 
       this.unlisten.push(
         () => canvas.removeEventListener('pointermove', onMove),
         () => canvas.removeEventListener('pointerup', onUp),
         () => canvas.removeEventListener('pointercancel', onCancel),
+        () => canvas.removeEventListener('pointerleave', onLeave),
       );
     });
   }
@@ -143,9 +150,13 @@ export class CanvasComponent implements OnInit, OnDestroy {
   }
 
   private onPointerMove(e: PointerEvent): void {
-    if (!this.inProgress) return;
-
     const pt = this.mainEngine.getPoint(e, this.mainRef.nativeElement);
+    this.cursorPoint = pt;
+
+    if (!this.inProgress) {
+      if (this.service.tool$() === 'eraser') this.dirty = true;
+      return;
+    }
 
     if (this.inProgress.type === 'STROKE' || this.inProgress.type === 'ERASE') {
       this.inProgress.points.push(pt);
@@ -165,6 +176,15 @@ export class CanvasComponent implements OnInit, OnDestroy {
       this.inProgress.points.push(pt);
     } else {
       this.inProgress.to = pt;
+
+      // Discard degenerate shapes produced by a click without a real drag.
+      const dx = Math.abs(this.inProgress.to.x - this.inProgress.from.x);
+      const dy = Math.abs(this.inProgress.to.y - this.inProgress.from.y);
+      if (dx < 0.005 && dy < 0.005) {
+        this.inProgress = null;
+        this.clearOverlay();
+        return;
+      }
     }
 
     const committed = this.inProgress as DrawAction;
@@ -184,8 +204,20 @@ export class CanvasComponent implements OnInit, OnDestroy {
     const dpr = window.devicePixelRatio || 1;
     overlay.getContext('2d')!.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
 
-    if (this.inProgress) {
+    if (!this.inProgress) {
+      if (this.service.tool$() === 'eraser' && this.cursorPoint) {
+        this.overlayEngine.renderEraserCursor(this.cursorPoint, this.service.strokeWidth$());
+      }
+      return;
+    }
+
+    if (this.inProgress.type === 'SHAPE') {
+      this.overlayEngine.renderShapePreview(this.inProgress);
+    } else {
       this.overlayEngine.renderAction(this.inProgress);
+      if (this.inProgress.type === 'ERASE' && this.cursorPoint) {
+        this.overlayEngine.renderEraserCursor(this.cursorPoint, this.service.strokeWidth$());
+      }
     }
   }
 

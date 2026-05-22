@@ -1,0 +1,113 @@
+<div class="toolbar" role="toolbar" aria-label="Drawing tools">
+
+  <!-- Tools -->
+  <section class="section">
+    <span class="section-label">Tool</span>
+    <div class="tool-grid">
+      @for (tool of tools; track tool.id) {
+        <button
+          class="tool-btn"
+          [class.active]="wb.tool$() === tool.id"
+          [title]="tool.label"
+          [attr.aria-pressed]="wb.tool$() === tool.id"
+          (click)="wb.tool$.set(tool.id)"
+        >
+          @switch (tool.id) {
+            @case ('pen') {
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M14.5 2.5L17.5 5.5L6.5 16.5L3 17L3.5 13.5L14.5 2.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                <path d="M12.5 4.5L15.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            }
+            @case ('eraser') {
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M3 16h7.5M9.5 5L16 11.5l-5 5L4.5 10 9.5 5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+              </svg>
+            }
+            @case ('rect') {
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <rect x="3" y="5" width="14" height="10" rx="1" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+            }
+            @case ('ellipse') {
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <ellipse cx="10" cy="10" rx="7" ry="5.5" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+            }
+          }
+        </button>
+      }
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- Color -->
+  <section class="section">
+    <span class="section-label">Color</span>
+    <div class="swatches">
+      @for (color of swatches; track color) {
+        <button
+          class="swatch"
+          [class.active]="wb.color$() === color"
+          [style.background]="color"
+          [title]="color"
+          [attr.aria-label]="'Set color ' + color"
+          [attr.aria-pressed]="wb.color$() === color"
+          (click)="wb.color$.set(color)"
+        ></button>
+      }
+    </div>
+    <label class="color-picker-label" title="Pick a custom color">
+      <input
+        type="color"
+        class="color-picker"
+        [value]="wb.color$()"
+        (input)="onColorChange($event)"
+        aria-label="Custom color"
+      />
+      <span class="color-picker-preview" [style.background]="wb.color$()"></span>
+      <span class="color-picker-text">Custom color</span>
+    </label>
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- Stroke width -->
+  <section class="section">
+    <div class="width-header">
+      <span class="section-label">Stroke</span>
+      <span class="width-badge">{{ wb.strokeWidth$() }}</span>
+    </div>
+    <input
+      type="range"
+      class="slider"
+      min="1"
+      max="40"
+      step="1"
+      [value]="wb.strokeWidth$()"
+      (input)="onWidthChange($event)"
+      aria-label="Stroke width"
+    />
+  </section>
+
+  <div class="divider"></div>
+
+  <!-- Actions -->
+  <section class="section actions">
+    <button class="action-btn" title="Undo (Ctrl+Z)" (click)="wb.undo()" aria-label="Undo">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M3.5 7.5A5.5 5.5 0 1 1 5 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M3.5 4v4h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Undo
+    </button>
+    <button class="action-btn danger" title="Clear board" (click)="wb.clear()" aria-label="Clear board">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+        <path d="M2 4h14M7 4V2.5h4V4M6 4v10a1 1 0 001 1h4a1 1 0 001-1V4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      Clear
+    </button>
+  </section>
+
+</div>
