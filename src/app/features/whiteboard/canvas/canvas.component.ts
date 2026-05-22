@@ -165,6 +165,15 @@ export class CanvasComponent implements OnInit, OnDestroy {
       this.inProgress.points.push(pt);
     } else {
       this.inProgress.to = pt;
+
+      // Discard degenerate shapes produced by a click without a real drag.
+      const dx = Math.abs(this.inProgress.to.x - this.inProgress.from.x);
+      const dy = Math.abs(this.inProgress.to.y - this.inProgress.from.y);
+      if (dx < 0.005 && dy < 0.005) {
+        this.inProgress = null;
+        this.clearOverlay();
+        return;
+      }
     }
 
     const committed = this.inProgress as DrawAction;
@@ -184,7 +193,11 @@ export class CanvasComponent implements OnInit, OnDestroy {
     const dpr = window.devicePixelRatio || 1;
     overlay.getContext('2d')!.clearRect(0, 0, overlay.width / dpr, overlay.height / dpr);
 
-    if (this.inProgress) {
+    if (!this.inProgress) return;
+
+    if (this.inProgress.type === 'SHAPE') {
+      this.overlayEngine.renderShapePreview(this.inProgress);
+    } else {
       this.overlayEngine.renderAction(this.inProgress);
     }
   }
