@@ -26,16 +26,23 @@ export function createApp(clientOrigin = process.env['CLIENT_ORIGIN'] ?? 'http:/
   );
 
   io.on('connection', (socket) => {
-    socket.data.userId = socket.id;
+    const boardId =
+      typeof socket.handshake.query['boardId'] === 'string'
+        ? socket.handshake.query['boardId']
+        : 'main';
 
-    socket.broadcast.emit('user_joined', socket.id);
+    socket.data.userId = socket.id;
+    socket.data.boardId = boardId;
+
+    socket.join(boardId);
+    socket.to(boardId).emit('user_joined', socket.id);
 
     socket.on('draw', (event) => {
-      socket.broadcast.emit('draw', { ...event, userId: socket.id });
+      socket.to(boardId).emit('draw', { ...event, userId: socket.id });
     });
 
     socket.on('disconnect', () => {
-      socket.broadcast.emit('user_left', socket.id);
+      socket.to(boardId).emit('user_left', socket.id);
     });
   });
 

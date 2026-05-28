@@ -56,9 +56,12 @@ describe('Socket.io', () => {
 
   afterEach(() => teardown());
 
-  function connect(): Promise<ClientSocket> {
+  function connect(boardId = 'main'): Promise<ClientSocket> {
     return new Promise<ClientSocket>((resolve, reject) => {
-      const client = ioClient(`http://localhost:${port}`, { transports: ['websocket'] });
+      const client = ioClient(`http://localhost:${port}`, {
+        query: { boardId },
+        transports: ['websocket'],
+      });
       clients.push(client);
       client.once('connect', () => resolve(client));
       client.once('connect_error', reject);
@@ -157,5 +160,67 @@ describe('Socket.io', () => {
     await new Promise((r) => setTimeout(r, 80));
 
     expect(senderGotDraw).toBe(false);
+  });
+
+  // ── room isolation ───────────────────────────────────────────────────────
+
+  it('does not deliver draw events to clients on a different board', async () => {
+    const sender = await connect('board-a');
+    const sameBoard = await connect('board-a');
+    const otherBoard = await connect('board-b');
+
+    let otherGotDraw = false;
+    otherBoard.on('draw', () => {
+      otherGotDraw = true;
+    });
+
+    const sameBoardConfirmed = waitFor<DrawEvent>(sameBoard, 'draw');
+
+    sender.emit('draw', {
+      type: 'stroke_move',
+      strokeId: 'r1',
+      point: { x: 5, y: 5 },
+      userId: '',
+    } satisfies DrawEvent);
+
+    await sameBoardConfirmed;
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(otherGotDraw).toBe(false);
+  });
+
+  it('does not emit user_joined to clients on a different board', async () => {
+    const existing = await connect('board-a');
+    const outsider = await connect('board-b');
+
+    let outsiderGotJoined = false;
+    outsider.on('user_joined', () => {
+      outsiderGotJoined = true;
+    });
+
+    const sameBoardJoined = waitFor<string>(existing, 'user_joined');
+    await connect('board-a');
+    await sameBoardJoined;
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(outsiderGotJoined).toBe(false);
+  });
+
+  it('does not emit user_left to clients on a different board', async () => {
+    const stayer = await connect('board-a');
+    const outsider = await connect('board-b');
+    const leaver = await connect('board-a');
+
+    let outsiderGotLeft = false;
+    outsider.on('user_left', () => {
+      outsiderGotLeft = true;
+    });
+
+    const sameBoardLeft = waitFor<string>(stayer, 'user_left');
+    leaver.disconnect();
+    await sameBoardLeft;
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(outsiderGotLeft).toBe(false);
   });
 });
