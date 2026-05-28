@@ -3,7 +3,7 @@ import request from 'supertest';
 import type { AddressInfo } from 'net';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 import { createApp } from '../app';
-import type { DrawAction, DrawActionAck, DrawEventPayload, CursorEvent, CursorPayload } from '../types';
+import type { BoardState, DrawAction, DrawActionAck, DrawEventPayload, CursorEvent, CursorPayload } from '../types';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -77,16 +77,74 @@ describe('Socket.io', () => {
         transports: ['websocket'],
       });
       clients.push(client);
+      client.once('connect', () => {
+        // Resolve only after board:state is consumed so the socket is clean
+        // for any board:state listeners the test may register afterwards.
+        client.once('board:state', () => resolve(client));
+        client.emit('user:join');
+      });
+      client.once('connect_error', reject);
+    });
+  }
+
+  /** Creates a socket and connects it without emitting user:join, so tests
+   *  can register board:state listeners before the server responds. */
+  function connectRaw(boardId = 'main'): Promise<ClientSocket> {
+    return new Promise<ClientSocket>((resolve, reject) => {
+      const client = ioClient(`http://localhost:${port}`, {
+        query: { boardId },
+        transports: ['websocket'],
+      });
+      clients.push(client);
       client.once('connect', () => resolve(client));
       client.once('connect_error', reject);
     });
   }
 
+  // ── board:state on join ──────────────────────────────────────────────────
+
+  it('emits board:state to the joining socket in response to user:join', async () => {
+    const socket = await connectRaw();
+    const statePromise = waitFor<BoardState>(socket, 'board:state');
+    socket.emit('user:join');
+    const state = await statePromise;
+
+    expect(state).toEqual({ seq: 0, log: [] });
+  });
+
+  it('board:state includes existing log entries when joining mid-session', async () => {
+    const first = await connect();
+    await sendAction(first, basePayload);
+    await sendAction(first, basePayload);
+
+    const second = await connectRaw();
+    const statePromise = waitFor<BoardState>(second, 'board:state');
+    second.emit('user:join');
+    const state = await statePromise;
+
+    expect(state.log).toHaveLength(2);
+    expect(state.seq).toBe(2);
+  });
+
+  it('does not send board:state to existing clients when a new socket joins', async () => {
+    const first = await connect();
+    let firstGotState = false;
+    first.on('board:state', () => { firstGotState = true; });
+
+    const second = await connectRaw();
+    const secondStatePromise = waitFor<BoardState>(second, 'board:state');
+    second.emit('user:join');
+    await secondStatePromise;
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(firstGotState).toBe(false);
+  });
+
   // ── presence events ──────────────────────────────────────────────────────
 
-  it('emits user_joined to existing clients when a new socket connects', async () => {
+  it('emits user:joined to existing clients when a new socket connects', async () => {
     const first = await connect();
-    const joinedPromise = waitFor<string>(first, 'user_joined');
+    const joinedPromise = waitFor<string>(first, 'user:joined');
 
     const second = await connect();
     const joinedId = await joinedPromise;
@@ -94,11 +152,11 @@ describe('Socket.io', () => {
     expect(joinedId).toBe(second.id);
   });
 
-  it('emits user_left to remaining clients when a socket disconnects', async () => {
+  it('emits user:left to remaining clients when a socket disconnects', async () => {
     const stayer = await connect();
     const leaver = await connect();
 
-    const leftPromise = waitFor<string>(stayer, 'user_left');
+    const leftPromise = waitFor<string>(stayer, 'user:left');
     const leaverId = leaver.id!;
 
     leaver.disconnect();
@@ -216,16 +274,16 @@ describe('Socket.io', () => {
     expect(otherGotAction).toBe(false);
   });
 
-  it('does not emit user_joined to clients on a different board', async () => {
+  it('does not emit user:joined to clients on a different board', async () => {
     const existing = await connect('board-a');
     const outsider = await connect('board-b');
 
     let outsiderGotJoined = false;
-    outsider.on('user_joined', () => {
+    outsider.on('user:joined', () => {
       outsiderGotJoined = true;
     });
 
-    const sameBoardJoined = waitFor<string>(existing, 'user_joined');
+    const sameBoardJoined = waitFor<string>(existing, 'user:joined');
     await connect('board-a');
     await sameBoardJoined;
     await new Promise((r) => setTimeout(r, 80));
@@ -233,17 +291,17 @@ describe('Socket.io', () => {
     expect(outsiderGotJoined).toBe(false);
   });
 
-  it('does not emit user_left to clients on a different board', async () => {
+  it('does not emit user:left to clients on a different board', async () => {
     const stayer = await connect('board-a');
     const outsider = await connect('board-b');
     const leaver = await connect('board-a');
 
     let outsiderGotLeft = false;
-    outsider.on('user_left', () => {
+    outsider.on('user:left', () => {
       outsiderGotLeft = true;
     });
 
-    const sameBoardLeft = waitFor<string>(stayer, 'user_left');
+    const sameBoardLeft = waitFor<string>(stayer, 'user:left');
     leaver.disconnect();
     await sameBoardLeft;
     await new Promise((r) => setTimeout(r, 80));

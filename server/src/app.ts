@@ -49,7 +49,12 @@ export function createApp(
     socket.data.boardId = boardId;
 
     socket.join(boardId);
-    socket.to(boardId).emit('user_joined', socket.id);
+
+    socket.on('user:join', () => {
+      const board = getBoard(boardId);
+      socket.emit('board:state', { seq: board.seq, log: board.log });
+      socket.to(boardId).emit('user:joined', socket.id);
+    });
 
     socket.on('draw:action', (payload, ack) => {
       const board = getBoard(boardId);
@@ -68,7 +73,7 @@ export function createApp(
     });
 
     socket.on('disconnect', () => {
-      socket.to(boardId).emit('user_left', socket.id);
+      socket.to(boardId).emit('user:left', socket.id);
     });
   });
 
