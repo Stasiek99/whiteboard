@@ -31,14 +31,25 @@ export interface BoardState {
   log: DrawAction[];
 }
 
+export interface CursorEvent {
+  x: number;
+  y: number;
+  userId: string;
+}
+
+/** What the client sends — server stamps userId */
+export type CursorPayload = Omit<CursorEvent, 'userId'>;
+
 export interface ServerToClientEvents {
   'draw:action': (action: DrawAction) => void;
+  'draw:cursor': (event: CursorEvent) => void;
   user_joined: (userId: string) => void;
   user_left: (userId: string) => void;
 }
 
 export interface ClientToServerEvents {
   'draw:action': (payload: DrawEventPayload, ack: (res: DrawActionAck) => void) => void;
+  'draw:cursor': (payload: CursorPayload) => void;
 }
 
 export interface InterServerEvents {

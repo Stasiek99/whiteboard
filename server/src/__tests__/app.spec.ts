@@ -3,7 +3,7 @@ import request from 'supertest';
 import type { AddressInfo } from 'net';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 import { createApp } from '../app';
-import type { DrawAction, DrawActionAck, DrawEventPayload } from '../types';
+import type { DrawAction, DrawActionAck, DrawEventPayload, CursorEvent, CursorPayload } from '../types';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -250,6 +250,70 @@ describe('Socket.io', () => {
 
     expect(outsiderGotLeft).toBe(false);
   });
+
+  // ── draw:cursor relay ────────────────────────────────────────────────────
+
+  it('broadcasts draw:cursor to other clients in the same room', async () => {
+    const sender = await connect();
+    const receiver = await connect();
+
+    const receivedPromise = waitFor<CursorEvent>(receiver, 'draw:cursor');
+
+    sender.emit('draw:cursor', { x: 42, y: 99 } satisfies CursorPayload);
+
+    const received = await receivedPromise;
+
+    expect(received.x).toBe(42);
+    expect(received.y).toBe(99);
+  });
+
+  it('stamps server-assigned socket.id as userId on draw:cursor', async () => {
+    const sender = await connect();
+    const receiver = await connect();
+
+    const receivedPromise = waitFor<CursorEvent>(receiver, 'draw:cursor');
+
+    sender.emit('draw:cursor', { x: 0, y: 0 } satisfies CursorPayload);
+
+    const received = await receivedPromise;
+
+    expect(received.userId).toBe(sender.id);
+  });
+
+  it('does not echo draw:cursor back to the sender', async () => {
+    const sender = await connect();
+    const receiver = await connect();
+
+    let senderGotCursor = false;
+    sender.on('draw:cursor', () => {
+      senderGotCursor = true;
+    });
+
+    const receiverConfirmed = waitFor<CursorEvent>(receiver, 'draw:cursor');
+    sender.emit('draw:cursor', { x: 1, y: 1 } satisfies CursorPayload);
+    await receiverConfirmed;
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(senderGotCursor).toBe(false);
+  });
+
+  it('does not deliver draw:cursor to clients on a different board', async () => {
+    const sender = await connect('board-a');
+    const sameBoard = await connect('board-a');
+    const otherBoard = await connect('board-b');
+
+    let otherGotCursor = false;
+    otherBoard.on('draw:cursor', () => {
+      otherGotCursor = true;
+    });
+
+    const sameBoardConfirmed = waitFor<CursorEvent>(sameBoard, 'draw:cursor');
+    sender.emit('draw:cursor', { x: 5, y: 5 } satisfies CursorPayload);
+    await sameBoardConfirmed;
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(otherGotCursor).toBe(false);
+  });
 });
 
 // ─── action log ──────────────────────────────────────────────────────────────
@@ -312,6 +376,20 @@ describe('draw:action log', () => {
     expect(board.log).toHaveLength(LOG_CAP);
     expect(board.log[0].seq).toBe(2);                      // seq=1 was evicted
     expect(board.log[LOG_CAP - 1].seq).toBe(LOG_CAP + 1);  // newest entry
+
+    await close();
+  });
+
+  it('does not add draw:cursor events to the board log', async () => {
+    const { boards, connectLog, close } = await makeLogServer();
+    const sender = await connectLog();
+    const receiver = await connectLog();
+
+    const receivedPromise = waitFor<CursorEvent>(receiver, 'draw:cursor');
+    sender.emit('draw:cursor', { x: 10, y: 20 } satisfies CursorPayload);
+    await receivedPromise;
+
+    expect(boards.get('main')?.log ?? []).toHaveLength(0);
 
     await close();
   });

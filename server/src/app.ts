@@ -63,6 +63,10 @@ export function createApp(
       ack({ seq });
     });
 
+    socket.on('draw:cursor', (payload) => {
+      socket.to(boardId).emit('draw:cursor', { ...payload, userId: socket.id });
+    });
+
     socket.on('disconnect', () => {
       socket.to(boardId).emit('user_left', socket.id);
     });
