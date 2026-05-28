@@ -452,3 +452,85 @@ describe('draw:action log', () => {
     await close();
   });
 });
+
+// ─── cursor state ─────────────────────────────────────────────────────────────
+
+describe('cursor state', () => {
+  const cursorClients: ClientSocket[] = [];
+
+  afterEach(() => cursorClients.forEach((c) => c.disconnect()));
+
+  async function makeCursorServer() {
+    const { httpServer, io, cursors } = createApp('*');
+    await new Promise<void>((r) => httpServer.listen(0, r));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    function connectCursor(boardId = 'main'): Promise<ClientSocket> {
+      return new Promise<ClientSocket>((resolve, reject) => {
+        const c = ioClient(`http://localhost:${port}`, {
+          query: { boardId },
+          transports: ['websocket'],
+        });
+        cursorClients.push(c);
+        c.once('connect', () => resolve(c));
+        c.once('connect_error', reject);
+      });
+    }
+
+    async function close() {
+      io.close();
+      await new Promise<void>((r) => httpServer.close(() => r()));
+    }
+
+    return { cursors, connectCursor, close };
+  }
+
+  it('stores cursor position when draw:cursor is received', async () => {
+    const { cursors, connectCursor, close } = await makeCursorServer();
+    const sender = await connectCursor();
+    const receiver = await connectCursor();
+
+    const receivedPromise = waitFor<CursorEvent>(receiver, 'draw:cursor');
+    sender.emit('draw:cursor', { x: 42, y: 99 } satisfies CursorPayload);
+    await receivedPromise;
+
+    const boardCursors = cursors.get('main')!;
+    expect(boardCursors.get(sender.id!)).toMatchObject({ x: 42, y: 99, userId: sender.id });
+
+    await close();
+  });
+
+  it('removes cursor entry when socket disconnects', async () => {
+    const { cursors, connectCursor, close } = await makeCursorServer();
+    const sender = await connectCursor();
+    const receiver = await connectCursor();
+
+    const receivedCursor = waitFor<CursorEvent>(receiver, 'draw:cursor');
+    sender.emit('draw:cursor', { x: 1, y: 2 } satisfies CursorPayload);
+    await receivedCursor;
+
+    const senderId = sender.id!;
+    expect(cursors.get('main')?.has(senderId)).toBe(true);
+
+    const leftPromise = waitFor<string>(receiver, 'user:left');
+    sender.disconnect();
+    await leftPromise;
+
+    expect(cursors.get('main')?.has(senderId)).toBe(false);
+
+    await close();
+  });
+
+  it('does not retain cursor entries for clients that never moved', async () => {
+    const { cursors, connectCursor, close } = await makeCursorServer();
+    const client = await connectCursor();
+
+    const clientId = client.id!;
+    client.disconnect();
+    await new Promise((r) => setTimeout(r, 80));
+
+    expect(cursors.get('main')?.has(clientId)).toBeFalsy();
+
+    await close();
+  });
+});

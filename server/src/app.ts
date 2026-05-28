@@ -8,6 +8,7 @@ import type {
   InterServerEvents,
   SocketData,
   BoardState,
+  CursorEvent,
   DrawAction,
 } from './types';
 
@@ -16,12 +17,20 @@ export function createApp(
   { logCap = 500 }: { logCap?: number } = {},
 ) {
   const boards = new Map<string, BoardState>();
+  const cursors = new Map<string, Map<string, CursorEvent>>();
 
   function getBoard(boardId: string): BoardState {
     if (!boards.has(boardId)) {
       boards.set(boardId, { seq: 0, log: [] });
     }
     return boards.get(boardId)!;
+  }
+
+  function getBoardCursors(boardId: string): Map<string, CursorEvent> {
+    if (!cursors.has(boardId)) {
+      cursors.set(boardId, new Map());
+    }
+    return cursors.get(boardId)!;
   }
 
   const app = express();
@@ -69,13 +78,16 @@ export function createApp(
     });
 
     socket.on('draw:cursor', (payload) => {
-      socket.to(boardId).emit('draw:cursor', { ...payload, userId: socket.id });
+      const cursor: CursorEvent = { ...payload, userId: socket.id };
+      getBoardCursors(boardId).set(socket.id, cursor);
+      socket.to(boardId).emit('draw:cursor', cursor);
     });
 
     socket.on('disconnect', () => {
+      getBoardCursors(boardId).delete(socket.id);
       socket.to(boardId).emit('user:left', socket.id);
     });
   });
 
-  return { app, httpServer, io, boards };
+  return { app, httpServer, io, boards, cursors };
 }
