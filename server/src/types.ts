@@ -14,14 +14,31 @@ export interface DrawEvent {
   userId: string;
 }
 
+/** What the client sends — server stamps userId and seq */
+export type DrawEventPayload = Omit<DrawEvent, 'userId'>;
+
+/** What gets stored in the log and broadcast to peers */
+export interface DrawAction extends DrawEvent {
+  seq: number;
+}
+
+export interface DrawActionAck {
+  seq: number;
+}
+
+export interface BoardState {
+  seq: number;
+  log: DrawAction[];
+}
+
 export interface ServerToClientEvents {
-  draw: (event: DrawEvent) => void;
+  'draw:action': (action: DrawAction) => void;
   user_joined: (userId: string) => void;
   user_left: (userId: string) => void;
 }
 
 export interface ClientToServerEvents {
-  draw: (event: DrawEvent) => void;
+  'draw:action': (payload: DrawEventPayload, ack: (res: DrawActionAck) => void) => void;
 }
 
 export interface InterServerEvents {

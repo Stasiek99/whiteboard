@@ -3,7 +3,7 @@ import request from 'supertest';
 import type { AddressInfo } from 'net';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 import { createApp } from '../app';
-import type { DrawEvent } from '../types';
+import type { DrawAction, DrawActionAck, DrawEventPayload } from '../types';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -19,6 +19,20 @@ function waitFor<T>(socket: ClientSocket, event: string, timeoutMs = 2000): Prom
     });
   });
 }
+
+function sendAction(socket: ClientSocket, payload: DrawEventPayload): Promise<DrawActionAck> {
+  return new Promise<DrawActionAck>((resolve) => {
+    socket.emit('draw:action', payload, resolve);
+  });
+}
+
+const basePayload: DrawEventPayload = {
+  type: 'stroke_move',
+  strokeId: 's1',
+  point: { x: 10, y: 20 },
+  color: '#000000',
+  lineWidth: 2,
+};
 
 // ─── HTTP routes ─────────────────────────────────────────────────────────────
 
@@ -93,100 +107,113 @@ describe('Socket.io', () => {
     expect(leftId).toBe(leaverId);
   });
 
-  // ── draw relay ───────────────────────────────────────────────────────────
+  // ── draw:action relay ────────────────────────────────────────────────────
 
-  it('broadcasts draw event to all other connected clients', async () => {
+  it('broadcasts draw:action to all other connected clients', async () => {
     const sender = await connect();
     const receiver = await connect();
 
-    const receivedPromise = waitFor<DrawEvent>(receiver, 'draw');
-
-    sender.emit('draw', {
-      type: 'stroke_move',
-      strokeId: 'abc',
-      point: { x: 10, y: 20 },
-      color: '#ff0000',
-      lineWidth: 3,
-      userId: '',
-    } satisfies DrawEvent);
-
+    const receivedPromise = waitFor<DrawAction>(receiver, 'draw:action');
+    await sendAction(sender, basePayload);
     const received = await receivedPromise;
 
-    expect(received.strokeId).toBe('abc');
-    expect(received.point).toEqual({ x: 10, y: 20 });
-    expect(received.color).toBe('#ff0000');
-    expect(received.lineWidth).toBe(3);
+    expect(received.strokeId).toBe(basePayload.strokeId);
+    expect(received.point).toEqual(basePayload.point);
+    expect(received.color).toBe(basePayload.color);
+    expect(received.lineWidth).toBe(basePayload.lineWidth);
   });
 
-  it('stamps the server-assigned socket.id as userId on forwarded draw events', async () => {
+  it('stamps the server-assigned socket.id as userId on forwarded draw:action', async () => {
     const sender = await connect();
     const receiver = await connect();
 
-    const receivedPromise = waitFor<DrawEvent>(receiver, 'draw');
-
-    sender.emit('draw', {
-      type: 'stroke_start',
-      strokeId: 's1',
-      point: { x: 0, y: 0 },
-      userId: 'client-supplied-id-should-be-ignored',
-    } satisfies DrawEvent);
-
+    const receivedPromise = waitFor<DrawAction>(receiver, 'draw:action');
+    await sendAction(sender, basePayload);
     const received = await receivedPromise;
 
     expect(received.userId).toBe(sender.id);
   });
 
-  it('does not echo draw events back to the sender', async () => {
+  it('does not echo draw:action back to the sender', async () => {
     const sender = await connect();
     const receiver = await connect();
 
-    let senderGotDraw = false;
-    sender.on('draw', () => {
-      senderGotDraw = true;
+    let senderGotAction = false;
+    sender.on('draw:action', () => {
+      senderGotAction = true;
     });
 
-    const receiverConfirmed = waitFor<DrawEvent>(receiver, 'draw');
-
-    sender.emit('draw', {
-      type: 'stroke_move',
-      strokeId: 'no-echo',
-      point: { x: 1, y: 1 },
-      userId: '',
-    } satisfies DrawEvent);
-
-    // Wait until receiver confirms the server processed and broadcast the event
+    const receiverConfirmed = waitFor<DrawAction>(receiver, 'draw:action');
+    await sendAction(sender, basePayload);
     await receiverConfirmed;
-    // Give any potential echo a moment to arrive
     await new Promise((r) => setTimeout(r, 80));
 
-    expect(senderGotDraw).toBe(false);
+    expect(senderGotAction).toBe(false);
+  });
+
+  // ── ack and seq ──────────────────────────────────────────────────────────
+
+  it('acknowledges draw:action with a positive seq number', async () => {
+    const client = await connect();
+
+    const ack = await sendAction(client, basePayload);
+
+    expect(typeof ack.seq).toBe('number');
+    expect(ack.seq).toBeGreaterThan(0);
+  });
+
+  it('increments seq monotonically within a board', async () => {
+    const client = await connect();
+
+    const ack1 = await sendAction(client, basePayload);
+    const ack2 = await sendAction(client, basePayload);
+    const ack3 = await sendAction(client, basePayload);
+
+    expect(ack1.seq).toBe(1);
+    expect(ack2.seq).toBe(2);
+    expect(ack3.seq).toBe(3);
+  });
+
+  it('maintains independent seq counters per board', async () => {
+    const clientA = await connect('board-a');
+    const clientB = await connect('board-b');
+
+    const ackA = await sendAction(clientA, basePayload);
+    const ackB = await sendAction(clientB, basePayload);
+
+    expect(ackA.seq).toBe(1);
+    expect(ackB.seq).toBe(1);
+  });
+
+  it('includes seq in the action broadcast to peers', async () => {
+    const sender = await connect();
+    const receiver = await connect();
+
+    const receivedPromise = waitFor<DrawAction>(receiver, 'draw:action');
+    const ack = await sendAction(sender, basePayload);
+    const received = await receivedPromise;
+
+    expect(received.seq).toBe(ack.seq);
   });
 
   // ── room isolation ───────────────────────────────────────────────────────
 
-  it('does not deliver draw events to clients on a different board', async () => {
+  it('does not deliver draw:action events to clients on a different board', async () => {
     const sender = await connect('board-a');
     const sameBoard = await connect('board-a');
     const otherBoard = await connect('board-b');
 
-    let otherGotDraw = false;
-    otherBoard.on('draw', () => {
-      otherGotDraw = true;
+    let otherGotAction = false;
+    otherBoard.on('draw:action', () => {
+      otherGotAction = true;
     });
 
-    const sameBoardConfirmed = waitFor<DrawEvent>(sameBoard, 'draw');
-
-    sender.emit('draw', {
-      type: 'stroke_move',
-      strokeId: 'r1',
-      point: { x: 5, y: 5 },
-      userId: '',
-    } satisfies DrawEvent);
-
+    const sameBoardConfirmed = waitFor<DrawAction>(sameBoard, 'draw:action');
+    await sendAction(sender, basePayload);
     await sameBoardConfirmed;
     await new Promise((r) => setTimeout(r, 80));
 
-    expect(otherGotDraw).toBe(false);
+    expect(otherGotAction).toBe(false);
   });
 
   it('does not emit user_joined to clients on a different board', async () => {
@@ -222,5 +249,70 @@ describe('Socket.io', () => {
     await new Promise((r) => setTimeout(r, 80));
 
     expect(outsiderGotLeft).toBe(false);
+  });
+});
+
+// ─── action log ──────────────────────────────────────────────────────────────
+
+describe('draw:action log', () => {
+  const LOG_CAP = 3;
+  const logClients: ClientSocket[] = [];
+
+  afterEach(() => logClients.forEach((c) => c.disconnect()));
+
+  async function makeLogServer() {
+    const { httpServer, io, boards } = createApp('*', { logCap: LOG_CAP });
+    await new Promise<void>((r) => httpServer.listen(0, r));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    function connectLog(boardId = 'main'): Promise<ClientSocket> {
+      return new Promise<ClientSocket>((resolve, reject) => {
+        const c = ioClient(`http://localhost:${port}`, {
+          query: { boardId },
+          transports: ['websocket'],
+        });
+        logClients.push(c);
+        c.once('connect', () => resolve(c));
+        c.once('connect_error', reject);
+      });
+    }
+
+    async function close() {
+      io.close();
+      await new Promise<void>((r) => httpServer.close(() => r()));
+    }
+
+    return { boards, connectLog, close };
+  }
+
+  it('appends each action to the board log with seq stamped', async () => {
+    const { boards, connectLog, close } = await makeLogServer();
+    const client = await connectLog();
+
+    await sendAction(client, basePayload);
+    await sendAction(client, basePayload);
+
+    const board = boards.get('main')!;
+    expect(board.log).toHaveLength(2);
+    expect(board.log[0].seq).toBe(1);
+    expect(board.log[1].seq).toBe(2);
+
+    await close();
+  });
+
+  it('caps the log at logCap and drops the oldest entry', async () => {
+    const { boards, connectLog, close } = await makeLogServer();
+    const client = await connectLog();
+
+    for (let i = 0; i < LOG_CAP + 1; i++) {
+      await sendAction(client, basePayload);
+    }
+
+    const board = boards.get('main')!;
+    expect(board.log).toHaveLength(LOG_CAP);
+    expect(board.log[0].seq).toBe(2);                      // seq=1 was evicted
+    expect(board.log[LOG_CAP - 1].seq).toBe(LOG_CAP + 1);  // newest entry
+
+    await close();
   });
 });

@@ -7,9 +7,23 @@ import type {
   ClientToServerEvents,
   InterServerEvents,
   SocketData,
+  BoardState,
+  DrawAction,
 } from './types';
 
-export function createApp(clientOrigin = process.env['CLIENT_ORIGIN'] ?? 'http://localhost:4200') {
+export function createApp(
+  clientOrigin = process.env['CLIENT_ORIGIN'] ?? 'http://localhost:4200',
+  { logCap = 500 }: { logCap?: number } = {},
+) {
+  const boards = new Map<string, BoardState>();
+
+  function getBoard(boardId: string): BoardState {
+    if (!boards.has(boardId)) {
+      boards.set(boardId, { seq: 0, log: [] });
+    }
+    return boards.get(boardId)!;
+  }
+
   const app = express();
   app.use(cors({ origin: clientOrigin }));
   app.use(express.json());
@@ -37,8 +51,16 @@ export function createApp(clientOrigin = process.env['CLIENT_ORIGIN'] ?? 'http:/
     socket.join(boardId);
     socket.to(boardId).emit('user_joined', socket.id);
 
-    socket.on('draw', (event) => {
-      socket.to(boardId).emit('draw', { ...event, userId: socket.id });
+    socket.on('draw:action', (payload, ack) => {
+      const board = getBoard(boardId);
+      const seq = ++board.seq;
+      const action: DrawAction = { ...payload, userId: socket.id, seq };
+
+      board.log.push(action);
+      if (board.log.length > logCap) board.log.shift();
+
+      socket.to(boardId).emit('draw:action', action);
+      ack({ seq });
     });
 
     socket.on('disconnect', () => {
@@ -46,5 +68,5 @@ export function createApp(clientOrigin = process.env['CLIENT_ORIGIN'] ?? 'http:/
     });
   });
 
-  return { app, httpServer, io };
+  return { app, httpServer, io, boards };
 }
