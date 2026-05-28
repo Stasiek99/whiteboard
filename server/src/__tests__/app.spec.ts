@@ -641,3 +641,103 @@ describe('room cleanup', () => {
     await close();
   });
 });
+
+// ─── Phase 3 integration scenarios ───────────────────────────────────────────
+
+describe('Phase 3 — resilience', () => {
+  const phase3Clients: ClientSocket[] = [];
+
+  afterEach(() => phase3Clients.forEach((c) => { try { c.disconnect(); } catch { /* already gone */ } }));
+
+  async function makeServer(opts: Parameters<typeof createApp>[1] = {}) {
+    const { httpServer, io, boards } = createApp('*', opts);
+    await new Promise<void>((r) => httpServer.listen(0, r));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    function connectPhase3(boardId = 'main', extraOpts: Parameters<typeof ioClient>[1] = {}): Promise<ClientSocket> {
+      return new Promise<ClientSocket>((resolve, reject) => {
+        const c = ioClient(`http://localhost:${port}`, {
+          query: { boardId },
+          transports: ['websocket'],
+          reconnection: false,
+          ...extraOpts,
+        });
+        phase3Clients.push(c);
+        c.once('connect', () => resolve(c));
+        c.once('connect_error', reject);
+      });
+    }
+
+    async function close() {
+      io.close();
+      await new Promise<void>((r) => httpServer.close(() => r()));
+    }
+
+    return { io, boards, connectPhase3, close };
+  }
+
+  // ── scenario 3: 600 events, default 500 cap ──────────────────────────────
+
+  it('default 500-action cap is enforced when 600 events are sent', async () => {
+    const { boards, connectPhase3, close } = await makeServer();
+    const client = await connectPhase3();
+
+    for (let i = 0; i < 600; i++) {
+      await sendAction(client, { ...basePayload, strokeId: `s${i}` });
+    }
+
+    const board = boards.get('main')!;
+    expect(board.log.length).toBe(500);
+    expect(board.log[0].seq).toBe(101);           // first 100 evicted
+    expect(board.log[499].seq).toBe(600);          // newest entry
+
+    await close();
+  });
+
+  // ── scenario 4: abrupt disconnect → user:left ────────────────────────────
+
+  it('broadcasts user:left when a connection is force-closed by the server', async () => {
+    const { io, connectPhase3, close } = await makeServer({ pingTimeout: 300, pingInterval: 100 });
+
+    const tab1 = await connectPhase3();
+    const tab2 = await connectPhase3();
+    const tab1Id = tab1.id!;
+
+    const leftPromise = waitFor<string>(tab2, 'user:left', 1000);
+
+    // Simulate the server side detecting a dead connection (equivalent to
+    // the ping-timeout path) by force-closing the server-side socket.
+    // The true DevTools → Offline path (pong suppression) exercises the
+    // same user:left broadcast and is covered by manual E2E testing.
+    const serverSocket = io.sockets.sockets.get(tab1Id);
+    serverSocket?.disconnect(true);
+
+    const leftId = await leftPromise;
+    expect(leftId).toBe(tab1Id);
+
+    expect(io.sockets.sockets.has(tab1Id)).toBe(false);
+
+    await close();
+  });
+
+  // ── scenario 5: server shutdown → clients disconnect/reconnecting ─────────
+
+  it('clients receive disconnect event when the server shuts down', async () => {
+    const { io, connectPhase3, close } = await makeServer();
+
+    const tab1 = await connectPhase3();
+    const tab2 = await connectPhase3();
+
+    const d1 = waitFor<string>(tab1, 'disconnect', 3000);
+    const d2 = waitFor<string>(tab2, 'disconnect', 3000);
+
+    // Shut down without waiting — clients should detect the dropped connection
+    io.close();
+
+    const [reason1, reason2] = await Promise.all([d1, d2]);
+    expect(reason1).toMatch(/transport|server|close/i);
+    expect(reason2).toMatch(/transport|server|close/i);
+
+    await close();
+  });
+});

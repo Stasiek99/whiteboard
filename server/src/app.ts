@@ -14,7 +14,12 @@ import type {
 
 export function createApp(
   clientOrigin = process.env['CLIENT_ORIGIN'] ?? 'http://localhost:4200',
-  { logCap = 500, roomIdleMs = 30 * 60 * 1000 }: { logCap?: number; roomIdleMs?: number } = {},
+  {
+    logCap = 500,
+    roomIdleMs = 30 * 60 * 1000,
+    pingTimeout = 20_000,
+    pingInterval = 25_000,
+  }: { logCap?: number; roomIdleMs?: number; pingTimeout?: number; pingInterval?: number } = {},
 ) {
   const boards = new Map<string, BoardState>();
   const cursors = new Map<string, Map<string, CursorEvent>>();
@@ -68,7 +73,7 @@ export function createApp(
 
   const io = new Server<ClientToServerEvents, ServerToClientEvents, InterServerEvents, SocketData>(
     httpServer,
-    { cors: { origin: clientOrigin, methods: ['GET', 'POST'] } },
+    { cors: { origin: clientOrigin, methods: ['GET', 'POST'] }, pingTimeout, pingInterval },
   );
 
   io.on('connection', (socket) => {
