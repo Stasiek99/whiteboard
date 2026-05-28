@@ -14,10 +14,11 @@ import type {
 
 export function createApp(
   clientOrigin = process.env['CLIENT_ORIGIN'] ?? 'http://localhost:4200',
-  { logCap = 500 }: { logCap?: number } = {},
+  { logCap = 500, roomIdleMs = 30 * 60 * 1000 }: { logCap?: number; roomIdleMs?: number } = {},
 ) {
   const boards = new Map<string, BoardState>();
   const cursors = new Map<string, Map<string, CursorEvent>>();
+  const roomTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function getBoard(boardId: string): BoardState {
     if (!boards.has(boardId)) {
@@ -31,6 +32,28 @@ export function createApp(
       cursors.set(boardId, new Map());
     }
     return cursors.get(boardId)!;
+  }
+
+  function cancelRoomTimer(boardId: string) {
+    const t = roomTimers.get(boardId);
+    if (t !== undefined) {
+      clearTimeout(t);
+      roomTimers.delete(boardId);
+    }
+  }
+
+  function scheduleRoomCleanup(boardId: string) {
+    cancelRoomTimer(boardId);
+    roomTimers.set(
+      boardId,
+      setTimeout(() => {
+        roomTimers.delete(boardId);
+        if (!io.sockets.adapter.rooms.has(boardId)) {
+          boards.delete(boardId);
+          cursors.delete(boardId);
+        }
+      }, roomIdleMs),
+    );
   }
 
   const app = express();
@@ -58,6 +81,7 @@ export function createApp(
     socket.data.boardId = boardId;
 
     socket.join(boardId);
+    cancelRoomTimer(boardId);
 
     socket.on('user:join', () => {
       const board = getBoard(boardId);
@@ -86,8 +110,11 @@ export function createApp(
     socket.on('disconnect', () => {
       getBoardCursors(boardId).delete(socket.id);
       socket.to(boardId).emit('user:left', socket.id);
+      if (!io.sockets.adapter.rooms.has(boardId)) {
+        scheduleRoomCleanup(boardId);
+      }
     });
   });
 
-  return { app, httpServer, io, boards, cursors };
+  return { app, httpServer, io, boards, cursors, roomTimers };
 }

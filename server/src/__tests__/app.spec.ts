@@ -534,3 +534,110 @@ describe('cursor state', () => {
     await close();
   });
 });
+
+// ─── room cleanup ─────────────────────────────────────────────────────────────
+
+describe('room cleanup', () => {
+  const cleanupClients: ClientSocket[] = [];
+
+  afterEach(() => cleanupClients.forEach((c) => c.disconnect()));
+
+  const IDLE_MS = 80;
+
+  async function makeCleanupServer() {
+    const { httpServer, io, boards, cursors, roomTimers } = createApp('*', { roomIdleMs: IDLE_MS });
+    await new Promise<void>((r) => httpServer.listen(0, r));
+    const port = (httpServer.address() as AddressInfo).port;
+
+    function connectCleanup(boardId = 'main'): Promise<ClientSocket> {
+      return new Promise<ClientSocket>((resolve, reject) => {
+        const c = ioClient(`http://localhost:${port}`, {
+          query: { boardId },
+          transports: ['websocket'],
+        });
+        cleanupClients.push(c);
+        c.once('connect', () => resolve(c));
+        c.once('connect_error', reject);
+      });
+    }
+
+    async function close() {
+      io.close();
+      await new Promise<void>((r) => httpServer.close(() => r()));
+    }
+
+    return { boards, cursors, roomTimers, connectCleanup, close };
+  }
+
+  it('deletes board log and cursors after idle timeout when room empties', async () => {
+    const { boards, cursors, connectCleanup, close } = await makeCleanupServer();
+    const client = await connectCleanup();
+
+    await sendAction(client, basePayload);
+    expect(boards.get('main')?.log).toHaveLength(1);
+
+    client.disconnect();
+    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+
+    expect(boards.has('main')).toBe(false);
+    expect(cursors.has('main')).toBe(false);
+
+    await close();
+  });
+
+  it('cancels cleanup timer when a new client joins before timeout fires', async () => {
+    const { boards, roomTimers, connectCleanup, close } = await makeCleanupServer();
+    const first = await connectCleanup();
+
+    await sendAction(first, basePayload);
+    first.disconnect();
+
+    // Timer is now scheduled — join before it fires
+    await new Promise((r) => setTimeout(r, IDLE_MS / 2));
+    expect(roomTimers.has('main')).toBe(true);
+
+    const second = await connectCleanup();
+    expect(roomTimers.has('main')).toBe(false);
+
+    // Wait past where the original timer would have fired
+    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    expect(boards.has('main')).toBe(true);
+
+    second.disconnect();
+    await close();
+  });
+
+  it('schedules a fresh timer when the room empties again after rejoining', async () => {
+    const { boards, roomTimers, connectCleanup, close } = await makeCleanupServer();
+
+    const first = await connectCleanup();
+    first.disconnect();
+    await new Promise((r) => setTimeout(r, IDLE_MS / 2));
+
+    // Rejoin cancels first timer, leaving creates a second timer
+    const second = await connectCleanup();
+    second.disconnect();
+    await new Promise((r) => setTimeout(r, IDLE_MS / 2));
+    expect(roomTimers.has('main')).toBe(true);
+
+    await new Promise((r) => setTimeout(r, IDLE_MS));
+    expect(boards.has('main')).toBe(false);
+
+    await close();
+  });
+
+  it('does not delete board while clients are still connected', async () => {
+    const { boards, connectCleanup, close } = await makeCleanupServer();
+    const first = await connectCleanup();
+    const second = await connectCleanup();
+
+    await sendAction(first, basePayload);
+    first.disconnect();
+
+    await new Promise((r) => setTimeout(r, IDLE_MS * 2));
+    expect(boards.has('main')).toBe(true);
+
+    second.disconnect();
+    await close();
+  });
+});
