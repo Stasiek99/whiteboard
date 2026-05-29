@@ -39,11 +39,13 @@ describe('WhiteboardService', () => {
   let boardState$: Subject<BoardState>;
   let drawAction$: Subject<WireDrawAction>;
   let emitCalls: DrawEventPayload[];
+  let emitCursorSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     boardState$ = new Subject<BoardState>();
     drawAction$ = new Subject<WireDrawAction>();
     emitCalls = [];
+    emitCursorSpy = vi.fn();
 
     TestBed.configureTestingModule({
       providers: [
@@ -53,6 +55,7 @@ describe('WhiteboardService', () => {
             boardState$: boardState$.asObservable(),
             drawAction$: drawAction$.asObservable(),
             emitAction: (payload: DrawEventPayload) => { emitCalls.push(payload); return EMPTY; },
+            emitCursor: emitCursorSpy,
           } as unknown as SocketService,
         },
       ],
@@ -433,6 +436,37 @@ describe('WhiteboardService', () => {
       drawAction$.next(wireStroke('r3'));
 
       expect(emitCalls).toHaveLength(0);
+    });
+  });
+
+  // ── emitCursor() ──────────────────────────────────────────────────────────
+
+  describe('emitCursor()', () => {
+    it('delegates to socketService.emitCursor with identical coordinates', () => {
+      service.emitCursor({ x: 0.3, y: 0.7 });
+
+      expect(emitCursorSpy).toHaveBeenCalledOnce();
+      expect(emitCursorSpy).toHaveBeenCalledWith({ x: 0.3, y: 0.7 });
+    });
+
+    it('passes coordinates without transformation — x and y are forwarded as-is', () => {
+      service.emitCursor({ x: 0.0, y: 1.0 });
+
+      expect(emitCursorSpy).toHaveBeenCalledWith({ x: 0.0, y: 1.0 });
+    });
+
+    it('does not call emitAction — cursor uses draw:cursor not draw:action', () => {
+      service.emitCursor({ x: 0.5, y: 0.5 });
+
+      expect(emitCalls).toHaveLength(0);
+    });
+
+    it('calls emitCursor once per call — no batching or deduplication in the service layer', () => {
+      service.emitCursor({ x: 0.1, y: 0.1 });
+      service.emitCursor({ x: 0.2, y: 0.2 });
+      service.emitCursor({ x: 0.3, y: 0.3 });
+
+      expect(emitCursorSpy).toHaveBeenCalledTimes(3);
     });
   });
 });

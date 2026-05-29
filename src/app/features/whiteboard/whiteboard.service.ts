@@ -1,7 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BehaviorSubject } from 'rxjs';
-import { ClearAction, DrawAction, EraseAction, ShapeAction, StrokeAction } from '../../core/models/action.model';
+import { ClearAction, DrawAction, EraseAction, Point, ShapeAction, StrokeAction } from '../../core/models/action.model';
 import { BoardState, DrawEventPayload, WireDrawAction } from '../../core/models/socket.types';
 import { SocketService } from '../../core/services/socket.service';
 
@@ -23,6 +23,10 @@ export class WhiteboardService {
     socketService.drawAction$
       .pipe(takeUntilDestroyed())
       .subscribe((wire) => this.applyRemoteAction(wire));
+  }
+
+  emitCursor(pt: Point): void {
+    this.socketService.emitCursor(pt);
   }
 
   addAction(action: DrawAction): void {

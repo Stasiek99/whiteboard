@@ -307,6 +307,67 @@ describe('CanvasComponent', () => {
     });
   });
 
+  // ── Test 10: cursor emission ─────────────────────────────────────────────
+
+  describe('cursor emission', () => {
+    let emitCursorSpy: ReturnType<typeof vi.spyOn>;
+    let canvas: HTMLCanvasElement;
+
+    beforeEach(() => {
+      canvas = fixture.debugElement.query(By.css('canvas')).nativeElement as HTMLCanvasElement;
+      emitCursorSpy = vi.spyOn(service, 'emitCursor').mockImplementation(() => {});
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('does not call emitCursor synchronously on pointermove — auditTime must elapse first', () => {
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 400, clientY: 300 }));
+
+      expect(emitCursorSpy).not.toHaveBeenCalled();
+    });
+
+    it('calls emitCursor once after 33ms with the normalized pointer position', () => {
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 400, clientY: 300 }));
+      vi.advanceTimersByTime(33);
+
+      // clientX=400/width=800 → x=0.5; clientY=300/height=600 → y=0.5
+      expect(emitCursorSpy).toHaveBeenCalledOnce();
+      expect(emitCursorSpy).toHaveBeenCalledWith({ x: 0.5, y: 0.5 });
+    });
+
+    it('emits the last point in the window — auditTime, not throttleTime', () => {
+      // Three moves arrive within a single 33ms window
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 100, clientY: 100 })); // x=0.125, y=0.1667
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 200, clientY: 150 })); // x=0.25,  y=0.25
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 400, clientY: 300 })); // x=0.5,   y=0.5  ← last
+      vi.advanceTimersByTime(33);
+
+      // throttleTime would emit the first (0.125, 0.1667); auditTime emits the last
+      expect(emitCursorSpy).toHaveBeenCalledOnce();
+      expect(emitCursorSpy).toHaveBeenCalledWith({ x: 0.5, y: 0.5 });
+    });
+
+    it('opens a new window after each flush — moves separated by >33ms each produce an emission', () => {
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 200, clientY: 150 }));
+      vi.advanceTimersByTime(33);
+
+      canvas.dispatchEvent(pointerEvent('pointermove', { clientX: 400, clientY: 300 }));
+      vi.advanceTimersByTime(33);
+
+      expect(emitCursorSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('pointerleave does not push to cursorMove$ — no cursor emission on leave', () => {
+      canvas.dispatchEvent(pointerEvent('pointerleave'));
+      vi.advanceTimersByTime(100);
+
+      expect(emitCursorSpy).not.toHaveBeenCalled();
+    });
+  });
+
   // ── Test 9: eraser — known MVP limitation ────────────────────────────────
 
   describe('eraser — known MVP limitation', () => {
