@@ -65,6 +65,15 @@ describe('CanvasComponent', () => {
       ctxMock as CanvasRenderingContext2D,
     );
     vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue(makeRect());
+
+    // jsdom omits setPointerCapture — define it as a no-op so vi.spyOn can wrap it
+    if (typeof HTMLCanvasElement.prototype.setPointerCapture !== 'function') {
+      Object.defineProperty(HTMLCanvasElement.prototype, 'setPointerCapture', {
+        value: () => {},
+        writable: true,
+        configurable: true,
+      });
+    }
     vi.spyOn(HTMLCanvasElement.prototype, 'setPointerCapture').mockImplementation(() => {});
 
     // ResizeObserver — capture the callback so tests can trigger it manually

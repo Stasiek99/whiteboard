@@ -1,26 +1,48 @@
-export type DrawEventType = 'stroke_start' | 'stroke_move' | 'stroke_end' | 'clear';
-
 export interface Point {
   x: number;
   y: number;
 }
 
-export interface DrawEvent {
-  type: DrawEventType;
+export interface WireStrokePayload {
+  type: 'stroke';
   strokeId: string;
-  point?: Point;
-  color?: string;
-  lineWidth?: number;
-  userId: string;
+  points: Point[];
+  color: string;
+  lineWidth: number;
+}
+
+export interface WireErasePayload {
+  type: 'erase';
+  strokeId: string;
+  points: Point[];
+  lineWidth: number;
+}
+
+export interface WireShapePayload {
+  type: 'shape';
+  strokeId: string;
+  shape: 'rect' | 'ellipse';
+  from: Point;
+  to: Point;
+  color: string;
+  lineWidth: number;
+  filled: boolean;
+}
+
+export interface WireClearPayload {
+  type: 'clear';
+  strokeId: string;
 }
 
 /** What the client sends — server stamps userId and seq */
-export type DrawEventPayload = Omit<DrawEvent, 'userId'>;
+export type DrawEventPayload =
+  | WireStrokePayload
+  | WireErasePayload
+  | WireShapePayload
+  | WireClearPayload;
 
 /** What gets stored in the log and broadcast to peers */
-export interface DrawAction extends DrawEvent {
-  seq: number;
-}
+export type DrawAction = DrawEventPayload & { userId: string; seq: number };
 
 export interface DrawActionAck {
   seq: number;

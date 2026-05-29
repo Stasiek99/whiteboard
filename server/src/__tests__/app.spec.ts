@@ -27,9 +27,9 @@ function sendAction(socket: ClientSocket, payload: DrawEventPayload): Promise<Dr
 }
 
 const basePayload: DrawEventPayload = {
-  type: 'stroke_move',
+  type: 'stroke',
   strokeId: 's1',
-  point: { x: 10, y: 20 },
+  points: [{ x: 10, y: 20 }],
   color: '#000000',
   lineWidth: 2,
 };
@@ -175,10 +175,7 @@ describe('Socket.io', () => {
     await sendAction(sender, basePayload);
     const received = await receivedPromise;
 
-    expect(received.strokeId).toBe(basePayload.strokeId);
-    expect(received.point).toEqual(basePayload.point);
-    expect(received.color).toBe(basePayload.color);
-    expect(received.lineWidth).toBe(basePayload.lineWidth);
+    expect(received).toMatchObject(basePayload);
   });
 
   it('stamps the server-assigned socket.id as userId on forwarded draw:action', async () => {

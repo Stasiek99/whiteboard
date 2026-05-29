@@ -1,7 +1,7 @@
 import { TestBed } from '@angular/core/testing';
-import { Subject } from 'rxjs';
-import { StrokeAction } from '../../core/models/action.model';
-import { BoardState } from '../../core/models/socket.types';
+import { EMPTY, Subject } from 'rxjs';
+import { EraseAction, ShapeAction, StrokeAction } from '../../core/models/action.model';
+import { BoardState, DrawEventPayload, WireDrawAction } from '../../core/models/socket.types';
 import { SocketService } from '../../core/services/socket.service';
 import { WhiteboardService } from './whiteboard.service';
 
@@ -13,18 +13,47 @@ const makeStroke = (id = '1'): StrokeAction => ({
   width: 4,
 });
 
+const makeErase = (id = 'e1'): EraseAction => ({
+  type: 'ERASE',
+  id,
+  points: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.5 }],
+  width: 20,
+});
+
+const makeShape = (id = 'sh1'): ShapeAction => ({
+  type: 'SHAPE',
+  id,
+  shape: 'rect',
+  from: { x: 0.1, y: 0.1 },
+  to: { x: 0.8, y: 0.9 },
+  color: '#ff0000',
+  width: 3,
+  filled: false,
+});
+
+const wireStroke = (strokeId = 's1', overrides: Partial<WireDrawAction> = {}): WireDrawAction =>
+  ({ type: 'stroke', strokeId, points: [{ x: 0.1, y: 0.2 }], color: '#ff0000', lineWidth: 6, userId: 'u1', seq: 1, ...overrides } as WireDrawAction);
+
 describe('WhiteboardService', () => {
   let service: WhiteboardService;
   let boardState$: Subject<BoardState>;
+  let drawAction$: Subject<WireDrawAction>;
+  let emitCalls: DrawEventPayload[];
 
   beforeEach(() => {
     boardState$ = new Subject<BoardState>();
+    drawAction$ = new Subject<WireDrawAction>();
+    emitCalls = [];
 
     TestBed.configureTestingModule({
       providers: [
         {
           provide: SocketService,
-          useValue: { boardState$: boardState$.asObservable() } as unknown as SocketService,
+          useValue: {
+            boardState$: boardState$.asObservable(),
+            drawAction$: drawAction$.asObservable(),
+            emitAction: (payload: DrawEventPayload) => { emitCalls.push(payload); return EMPTY; },
+          } as unknown as SocketService,
         },
       ],
     });
@@ -62,6 +91,93 @@ describe('WhiteboardService', () => {
       expect(snapshot).toHaveLength(1);
       expect(service.actions$.getValue()).toHaveLength(2);
     });
+
+    it('emits a stroke wire payload to the socket', () => {
+      service.addAction(makeStroke('x'));
+
+      expect(emitCalls).toHaveLength(1);
+      expect(emitCalls[0]).toMatchObject({
+        type: 'stroke',
+        strokeId: 'x',
+        points: [{ x: 0.1, y: 0.2 }],
+        color: '#000000',
+        lineWidth: 4,
+      });
+    });
+
+    it('emits a clear wire payload to the socket when clear() is called', () => {
+      service.clear();
+      expect(emitCalls).toHaveLength(1);
+      expect(emitCalls[0]).toMatchObject({ type: 'clear' });
+    });
+
+    it('emits an erase wire payload with all points in one message', () => {
+      service.addAction(makeErase('er1'));
+
+      expect(emitCalls).toHaveLength(1);
+      expect(emitCalls[0]).toMatchObject({
+        type: 'erase',
+        strokeId: 'er1',
+        points: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.5 }],
+        lineWidth: 20,
+      });
+    });
+
+    it('emits a shape wire payload with from/to geometry', () => {
+      service.addAction(makeShape('sh2'));
+
+      expect(emitCalls).toHaveLength(1);
+      expect(emitCalls[0]).toMatchObject({
+        type: 'shape',
+        strokeId: 'sh2',
+        shape: 'rect',
+        from: { x: 0.1, y: 0.1 },
+        to: { x: 0.8, y: 0.9 },
+        color: '#ff0000',
+        lineWidth: 3,
+        filled: false,
+      });
+    });
+
+    it('emits exactly one socket message per addAction() call — never per-point', () => {
+      const stroke = makeStroke('multi');
+      stroke.points = [
+        { x: 0.1, y: 0.1 },
+        { x: 0.2, y: 0.2 },
+        { x: 0.3, y: 0.3 },
+        { x: 0.4, y: 0.4 },
+        { x: 0.5, y: 0.5 },
+      ];
+
+      service.addAction(stroke);
+
+      expect(emitCalls).toHaveLength(1);
+    });
+
+    it('emits all accumulated points in that single message', () => {
+      const stroke = makeStroke('all-pts');
+      stroke.points = [
+        { x: 0.1, y: 0.1 },
+        { x: 0.5, y: 0.5 },
+        { x: 0.9, y: 0.9 },
+      ];
+
+      service.addAction(stroke);
+
+      const payload = emitCalls[0];
+      if (payload.type !== 'stroke') throw new Error('expected stroke type');
+      expect(payload.points).toHaveLength(3);
+      expect(payload.points[2]).toEqual({ x: 0.9, y: 0.9 });
+    });
+
+    it('emits N messages for N sequential addAction() calls — no batching', () => {
+      service.addAction(makeStroke('a'));
+      service.addAction(makeStroke('b'));
+      service.addAction(makeStroke('c'));
+
+      expect(emitCalls).toHaveLength(3);
+      expect(emitCalls.map((p) => (p as { strokeId: string }).strokeId)).toEqual(['a', 'b', 'c']);
+    });
   });
 
   // ── undo() ────────────────────────────────────────────────────────────────
@@ -80,6 +196,15 @@ describe('WhiteboardService', () => {
     it('is a no-op on an empty log', () => {
       expect(() => service.undo()).not.toThrow();
       expect(service.actions$.getValue()).toHaveLength(0);
+    });
+
+    it('does not emit to the socket — undo is local only', () => {
+      service.addAction(makeStroke('a'));
+      emitCalls.length = 0; // clear the addAction emit
+
+      service.undo();
+
+      expect(emitCalls).toHaveLength(0);
     });
   });
 
@@ -154,14 +279,10 @@ describe('WhiteboardService', () => {
       expect(service.actions$.getValue()).toHaveLength(0);
     });
 
-    it('reconstructs completed strokes from stroke_start/move/end events', () => {
+    it('maps a wire stroke to a StrokeAction', () => {
       boardState$.next({
-        seq: 3,
-        log: [
-          { type: 'stroke_start', strokeId: 's1', point: { x: 0.1, y: 0.2 }, color: '#ff0000', lineWidth: 6, userId: 'u1', seq: 1 },
-          { type: 'stroke_move',  strokeId: 's1', point: { x: 0.3, y: 0.4 }, userId: 'u1', seq: 2 },
-          { type: 'stroke_end',   strokeId: 's1', userId: 'u1', seq: 3 },
-        ],
+        seq: 1,
+        log: [wireStroke('s1', { points: [{ x: 0.1, y: 0.2 }, { x: 0.3, y: 0.4 }], color: '#ff0000', lineWidth: 6 })],
       });
 
       const log = service.actions$.getValue();
@@ -175,12 +296,33 @@ describe('WhiteboardService', () => {
       });
     });
 
-    it('maps wire clear events to ClearAction', () => {
+    it('maps a wire erase to an EraseAction', () => {
       boardState$.next({
-        seq: 4,
-        log: [
-          { type: 'clear', strokeId: 'clr-1', userId: 'u1', seq: 1 },
-        ],
+        seq: 1,
+        log: [{ type: 'erase', strokeId: 'e1', points: [{ x: 0.5, y: 0.5 }], lineWidth: 20, userId: 'u1', seq: 1 }],
+      });
+
+      expect(service.actions$.getValue()[0]).toMatchObject({ type: 'ERASE', id: 'e1', width: 20 });
+    });
+
+    it('maps a wire shape to a ShapeAction', () => {
+      boardState$.next({
+        seq: 1,
+        log: [{
+          type: 'shape', strokeId: 'sh1', shape: 'rect',
+          from: { x: 0.1, y: 0.1 }, to: { x: 0.9, y: 0.9 },
+          color: '#abc', lineWidth: 3, filled: false,
+          userId: 'u1', seq: 1,
+        }],
+      });
+
+      expect(service.actions$.getValue()[0]).toMatchObject({ type: 'SHAPE', id: 'sh1', shape: 'rect' });
+    });
+
+    it('maps a wire clear to a ClearAction', () => {
+      boardState$.next({
+        seq: 1,
+        log: [{ type: 'clear', strokeId: 'clr-1', userId: 'u1', seq: 1 }],
       });
 
       const log = service.actions$.getValue();
@@ -190,79 +332,107 @@ describe('WhiteboardService', () => {
 
     it('preserves ordering: strokes and clears appear in log order', () => {
       boardState$.next({
-        seq: 5,
+        seq: 3,
         log: [
-          { type: 'stroke_start', strokeId: 'a', point: { x: 0, y: 0 }, color: '#000', lineWidth: 2, userId: 'u1', seq: 1 },
-          { type: 'stroke_end',   strokeId: 'a', userId: 'u1', seq: 2 },
-          { type: 'clear',        strokeId: 'clr', userId: 'u1', seq: 3 },
-          { type: 'stroke_start', strokeId: 'b', point: { x: 1, y: 1 }, color: '#fff', lineWidth: 2, userId: 'u2', seq: 4 },
-          { type: 'stroke_end',   strokeId: 'b', userId: 'u2', seq: 5 },
+          wireStroke('a', { seq: 1 }),
+          { type: 'clear', strokeId: 'clr', userId: 'u1', seq: 2 },
+          wireStroke('b', { userId: 'u2', seq: 3 }),
         ],
       });
 
       const types = service.actions$.getValue().map((a) => a.type);
       expect(types).toEqual(['STROKE', 'CLEAR', 'STROKE']);
     });
+  });
 
-    it('drops an incomplete stroke (no stroke_end) — no partial actions', () => {
-      boardState$.next({
-        seq: 6,
-        log: [
-          { type: 'stroke_start', strokeId: 'incomplete', point: { x: 0.5, y: 0.5 }, color: '#000', lineWidth: 2, userId: 'u1', seq: 1 },
-          { type: 'stroke_move',  strokeId: 'incomplete', point: { x: 0.6, y: 0.6 }, userId: 'u1', seq: 2 },
-          // no stroke_end
-        ],
-      });
+  // ── remote draw:action ───────────────────────────────────────────────────
 
-      expect(service.actions$.getValue()).toHaveLength(0);
+  describe('remote drawAction$', () => {
+    it('appends an incoming stroke from another user', () => {
+      drawAction$.next(wireStroke('remote-1'));
+
+      const log = service.actions$.getValue();
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatchObject({ type: 'STROKE', id: 'remote-1' });
     });
 
-    it('falls back to #000000 color when stroke_start omits color', () => {
-      boardState$.next({
-        seq: 7,
-        log: [
-          { type: 'stroke_start', strokeId: 'nc', point: { x: 0, y: 0 }, userId: 'u1', seq: 1 },
-          { type: 'stroke_end',   strokeId: 'nc', userId: 'u1', seq: 2 },
-        ],
-      });
-
-      expect(service.actions$.getValue()[0]).toMatchObject({ type: 'STROKE', color: '#000000' });
+    it('does not emit to socket for remote actions', () => {
+      drawAction$.next(wireStroke('remote-2'));
+      expect(emitCalls).toHaveLength(0);
     });
 
-    it('falls back to width 4 when stroke_start omits lineWidth', () => {
-      boardState$.next({
-        seq: 8,
-        log: [
-          { type: 'stroke_start', strokeId: 'nw', point: { x: 0, y: 0 }, color: '#abc', userId: 'u1', seq: 1 },
-          { type: 'stroke_end',   strokeId: 'nw', userId: 'u1', seq: 2 },
-        ],
-      });
+    it('appends remote actions after local ones', () => {
+      service.addAction(makeStroke('local'));
+      drawAction$.next(wireStroke('remote'));
 
-      expect(service.actions$.getValue()[0]).toMatchObject({ type: 'STROKE', width: 4 });
+      const ids = service.actions$.getValue().map((a) => a.id);
+      expect(ids).toEqual(['local', 'remote']);
     });
 
-    it('silently ignores a stroke_start that carries no point', () => {
-      boardState$.next({
-        seq: 9,
-        log: [
-          { type: 'stroke_start', strokeId: 'nopoint', userId: 'u1', seq: 1 },
-          { type: 'stroke_end',   strokeId: 'nopoint', userId: 'u1', seq: 2 },
-        ],
+    it('applies a remote erase action as EraseAction', () => {
+      drawAction$.next({
+        type: 'erase',
+        strokeId: 'er-remote',
+        points: [{ x: 0.5, y: 0.5 }, { x: 0.6, y: 0.6 }],
+        lineWidth: 16,
+        userId: 'u2',
+        seq: 1,
       });
 
-      expect(service.actions$.getValue()).toHaveLength(0);
+      const log = service.actions$.getValue();
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatchObject({ type: 'ERASE', id: 'er-remote', width: 16 });
     });
 
-    it('silently ignores a stroke_move with no prior stroke_start', () => {
-      boardState$.next({
-        seq: 10,
-        log: [
-          { type: 'stroke_move', strokeId: 'orphan', point: { x: 0.5, y: 0.5 }, userId: 'u1', seq: 1 },
-          { type: 'stroke_end',  strokeId: 'orphan', userId: 'u1', seq: 2 },
-        ],
+    it('applies a remote shape action as ShapeAction', () => {
+      drawAction$.next({
+        type: 'shape',
+        strokeId: 'sh-remote',
+        shape: 'ellipse',
+        from: { x: 0.2, y: 0.2 },
+        to: { x: 0.7, y: 0.8 },
+        color: '#0000ff',
+        lineWidth: 2,
+        filled: true,
+        userId: 'u2',
+        seq: 1,
       });
 
-      expect(service.actions$.getValue()).toHaveLength(0);
+      const log = service.actions$.getValue();
+      expect(log).toHaveLength(1);
+      expect(log[0]).toMatchObject({
+        type: 'SHAPE',
+        id: 'sh-remote',
+        shape: 'ellipse',
+        filled: true,
+        color: '#0000ff',
+      });
+    });
+
+    it('applies a remote clear as ClearAction', () => {
+      service.addAction(makeStroke('before'));
+      drawAction$.next({ type: 'clear', strokeId: 'clr-remote', userId: 'u2', seq: 2 });
+
+      const log = service.actions$.getValue();
+      expect(log).toHaveLength(2);
+      expect(log[1]).toMatchObject({ type: 'CLEAR', id: 'clr-remote' });
+    });
+
+    it('accumulates multiple remote actions in order', () => {
+      drawAction$.next(wireStroke('r1', { seq: 1 }));
+      drawAction$.next(wireStroke('r2', { seq: 2 }));
+      drawAction$.next({ type: 'clear', strokeId: 'clr', userId: 'u1', seq: 3 });
+
+      const types = service.actions$.getValue().map((a) => a.type);
+      expect(types).toEqual(['STROKE', 'STROKE', 'CLEAR']);
+    });
+
+    it('does not emit to socket even when multiple remote actions arrive', () => {
+      drawAction$.next(wireStroke('r1'));
+      drawAction$.next(wireStroke('r2'));
+      drawAction$.next(wireStroke('r3'));
+
+      expect(emitCalls).toHaveLength(0);
     });
   });
 });

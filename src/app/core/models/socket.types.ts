@@ -1,28 +1,50 @@
 /** Wire types shared between client and server for Socket.IO communication. */
 
-export type DrawEventType = 'stroke_start' | 'stroke_move' | 'stroke_end' | 'clear';
-
 export interface WirePoint {
   x: number;
   y: number;
 }
 
-export interface DrawEvent {
-  type: DrawEventType;
+export interface WireStrokePayload {
+  type: 'stroke';
   strokeId: string;
-  point?: WirePoint;
-  color?: string;
-  lineWidth?: number;
-  userId: string;
+  points: WirePoint[];
+  color: string;
+  lineWidth: number;
+}
+
+export interface WireErasePayload {
+  type: 'erase';
+  strokeId: string;
+  points: WirePoint[];
+  lineWidth: number;
+}
+
+export interface WireShapePayload {
+  type: 'shape';
+  strokeId: string;
+  shape: 'rect' | 'ellipse';
+  from: WirePoint;
+  to: WirePoint;
+  color: string;
+  lineWidth: number;
+  filled: boolean;
+}
+
+export interface WireClearPayload {
+  type: 'clear';
+  strokeId: string;
 }
 
 /** Payload the client sends — server stamps userId and seq. */
-export type DrawEventPayload = Omit<DrawEvent, 'userId'>;
+export type DrawEventPayload =
+  | WireStrokePayload
+  | WireErasePayload
+  | WireShapePayload
+  | WireClearPayload;
 
-/** Broadcast-ready action with server-assigned sequence number. */
-export interface WireDrawAction extends DrawEvent {
-  seq: number;
-}
+/** Broadcast-ready action with server-assigned userId and sequence number. */
+export type WireDrawAction = DrawEventPayload & { userId: string; seq: number };
 
 export interface DrawActionAck {
   seq: number;

@@ -130,8 +130,11 @@ describe('SocketService', () => {
   describe('drawAction$', () => {
     it('emits the draw action pushed by the server', async () => {
       const action: WireDrawAction = {
-        type: 'stroke_start',
+        type: 'stroke',
         strokeId: 's1',
+        points: [{ x: 0.1, y: 0.2 }],
+        color: '#000',
+        lineWidth: 2,
         userId: 'u1',
         seq: 1,
       };
@@ -187,7 +190,7 @@ describe('SocketService', () => {
 
   describe('emitAction()', () => {
     it('is a cold Observable — does not emit to socket until subscribed', () => {
-      const payload: DrawEventPayload = { type: 'stroke_end', strokeId: 's3' };
+      const payload: DrawEventPayload = { type: 'clear', strokeId: 's3' };
 
       service.emitAction(payload); // not subscribed
 
@@ -195,7 +198,7 @@ describe('SocketService', () => {
     });
 
     it('emits draw:action to the socket with the given payload on subscribe', () => {
-      const payload: DrawEventPayload = { type: 'stroke_start', strokeId: 's1' };
+      const payload: DrawEventPayload = { type: 'stroke', strokeId: 's1', points: [{ x: 0.1, y: 0.2 }], color: '#000', lineWidth: 2 };
       mockSocket.emit.mockImplementation(
         (_ev: string, _p: unknown, ack: (r: unknown) => void) => ack({ seq: 1 }),
       );
@@ -206,7 +209,7 @@ describe('SocketService', () => {
     });
 
     it('resolves the Observable with the server-assigned ack (seq number)', async () => {
-      const payload: DrawEventPayload = { type: 'stroke_move', strokeId: 's2' };
+      const payload: DrawEventPayload = { type: 'stroke', strokeId: 's2', points: [{ x: 0.5, y: 0.5 }], color: '#000', lineWidth: 2 };
       const ackResponse = { seq: 42 };
       mockSocket.emit.mockImplementation(
         (_ev: string, _p: unknown, ack: (r: unknown) => void) => ack(ackResponse),

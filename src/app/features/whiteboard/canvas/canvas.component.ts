@@ -63,9 +63,9 @@ export class CanvasComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    this.actionsSub.unsubscribe();
+    this.actionsSub?.unsubscribe();
     cancelAnimationFrame(this.rafId);
-    this.resizeObserver.disconnect();
+    this.resizeObserver?.disconnect();
     this.unlisten.forEach(fn => fn());
   }
 

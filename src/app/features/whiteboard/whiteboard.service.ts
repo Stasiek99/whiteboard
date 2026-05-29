@@ -1,8 +1,8 @@
 import { Injectable, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BehaviorSubject } from 'rxjs';
-import { ClearAction, DrawAction, StrokeAction } from '../../core/models/action.model';
-import { BoardState, WireDrawAction } from '../../core/models/socket.types';
+import { ClearAction, DrawAction, EraseAction, ShapeAction, StrokeAction } from '../../core/models/action.model';
+import { BoardState, DrawEventPayload, WireDrawAction } from '../../core/models/socket.types';
 import { SocketService } from '../../core/services/socket.service';
 
 export type DrawTool = 'pen' | 'eraser' | 'rect' | 'ellipse';
@@ -19,10 +19,15 @@ export class WhiteboardService {
     socketService.boardState$
       .pipe(takeUntilDestroyed())
       .subscribe((state) => this.seedFromBoardState(state));
+
+    socketService.drawAction$
+      .pipe(takeUntilDestroyed())
+      .subscribe((wire) => this.applyRemoteAction(wire));
   }
 
   addAction(action: DrawAction): void {
     this.actions$.next([...this.actions$.getValue(), action]);
+    this.socketService.emitAction(this.toWirePayload(action)).subscribe();
   }
 
   undo(): void {
@@ -36,45 +41,62 @@ export class WhiteboardService {
     this.addAction(action);
   }
 
-  private seedFromBoardState(state: BoardState): void {
-    this.actions$.next(this.wireLogToActions(state.log));
+  private applyRemoteAction(wire: WireDrawAction): void {
+    const action = this.wireActionToDrawAction(wire);
+    if (!action) return;
+    this.actions$.next([...this.actions$.getValue(), action]);
   }
 
-  private wireLogToActions(log: WireDrawAction[]): DrawAction[] {
-    type StrokeAccum = { points: Array<{ x: number; y: number }>; color: string; width: number };
-    const inProgress = new Map<string, StrokeAccum>();
-    const actions: DrawAction[] = [];
+  private seedFromBoardState(state: BoardState): void {
+    const actions = state.log
+      .map((w) => this.wireActionToDrawAction(w))
+      .filter((a): a is DrawAction => a !== null);
+    this.actions$.next(actions);
+  }
 
-    for (const event of log) {
-      if (event.type === 'clear') {
-        actions.push({ type: 'CLEAR', id: event.strokeId });
-        continue;
-      }
-
-      if (event.type === 'stroke_start' && event.point) {
-        inProgress.set(event.strokeId, {
-          points: [event.point],
-          color: event.color ?? '#000000',
-          width: event.lineWidth ?? 4,
-        });
-      } else if (event.type === 'stroke_move' && event.point) {
-        inProgress.get(event.strokeId)?.points.push(event.point);
-      } else if (event.type === 'stroke_end') {
-        const stroke = inProgress.get(event.strokeId);
-        if (stroke) {
-          const action: StrokeAction = {
-            type: 'STROKE',
-            id: event.strokeId,
-            points: stroke.points,
-            color: stroke.color,
-            width: stroke.width,
-          };
-          actions.push(action);
-          inProgress.delete(event.strokeId);
-        }
-      }
+  private wireActionToDrawAction(wire: WireDrawAction): DrawAction | null {
+    switch (wire.type) {
+      case 'stroke':
+        return {
+          type: 'STROKE',
+          id: wire.strokeId,
+          points: wire.points,
+          color: wire.color,
+          width: wire.lineWidth,
+        } satisfies StrokeAction;
+      case 'erase':
+        return {
+          type: 'ERASE',
+          id: wire.strokeId,
+          points: wire.points,
+          width: wire.lineWidth,
+        } satisfies EraseAction;
+      case 'shape':
+        return {
+          type: 'SHAPE',
+          id: wire.strokeId,
+          shape: wire.shape,
+          from: wire.from,
+          to: wire.to,
+          color: wire.color,
+          width: wire.lineWidth,
+          filled: wire.filled,
+        } satisfies ShapeAction;
+      case 'clear':
+        return { type: 'CLEAR', id: wire.strokeId } satisfies ClearAction;
     }
+  }
 
-    return actions;
+  private toWirePayload(action: DrawAction): DrawEventPayload {
+    switch (action.type) {
+      case 'STROKE':
+        return { type: 'stroke', strokeId: action.id, points: action.points, color: action.color, lineWidth: action.width };
+      case 'ERASE':
+        return { type: 'erase', strokeId: action.id, points: action.points, lineWidth: action.width };
+      case 'SHAPE':
+        return { type: 'shape', strokeId: action.id, shape: action.shape, from: action.from, to: action.to, color: action.color, lineWidth: action.width, filled: action.filled };
+      case 'CLEAR':
+        return { type: 'clear', strokeId: action.id };
+    }
   }
 }
