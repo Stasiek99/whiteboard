@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
+import { CanvasViewportService, ViewportSize } from '../../../core/services/canvas-viewport.service';
 import { RemoteCursor, RemoteUsersService } from '../../../core/services/remote-users.service';
 import { CursorOverlayComponent } from './cursor-overlay.component';
 
@@ -16,22 +17,11 @@ const makeCursor = (overrides: Partial<RemoteCursor> = {}): RemoteCursor => ({
 describe('CursorOverlayComponent', () => {
   let fixture: ComponentFixture<CursorOverlayComponent>;
   let cursorsSignal: ReturnType<typeof signal<RemoteCursor[]>>;
-  let triggerResize: () => void;
+  let viewportSignal: ReturnType<typeof signal<ViewportSize>>;
 
   beforeEach(async () => {
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      width: 800, height: 600, left: 0, top: 0, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
-    } as DOMRect);
-
-    vi.stubGlobal('ResizeObserver', class {
-      constructor(callback: () => void) {
-        triggerResize = callback;
-      }
-      observe = vi.fn();
-      disconnect = vi.fn();
-    });
-
     cursorsSignal = signal<RemoteCursor[]>([]);
+    viewportSignal = signal<ViewportSize>({ width: 800, height: 600 });
 
     await TestBed.configureTestingModule({
       imports: [CursorOverlayComponent],
@@ -40,16 +30,15 @@ describe('CursorOverlayComponent', () => {
           provide: RemoteUsersService,
           useValue: { cursors: cursorsSignal.asReadonly() } as unknown as RemoteUsersService,
         },
+        {
+          provide: CanvasViewportService,
+          useValue: { size: viewportSignal.asReadonly() } as unknown as CanvasViewportService,
+        },
       ],
     }).compileComponents();
 
     fixture = TestBed.createComponent(CursorOverlayComponent);
     fixture.detectChanges();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
   });
 
   it('renders no cursor elements when there are no remote users', () => {
@@ -90,8 +79,8 @@ describe('CursorOverlayComponent', () => {
     expect(nametag.style.background).toBe('rgb(255, 0, 0)');
   });
 
-  it('positions each cursor by projecting normalized coordinates onto the overlay box in pixels', () => {
-    // Overlay box is mocked to 800x600 — x=0.25 → 200px, y=0.75 → 450px.
+  it('positions each cursor by projecting normalized coordinates onto the canvas viewport in pixels', () => {
+    // Viewport is 800x600 — x=0.25 → 200px, y=0.75 → 450px.
     cursorsSignal.set([makeCursor({ x: 0.25, y: 0.75 })]);
     fixture.detectChanges();
 
@@ -99,15 +88,12 @@ describe('CursorOverlayComponent', () => {
     expect(cursor.style.transform).toBe('translate(200px, 450px)');
   });
 
-  it('re-projects to new pixel coordinates when the overlay box is resized', () => {
+  it('re-projects to new pixel coordinates when CanvasViewportService publishes a new size (canvas resize)', () => {
     cursorsSignal.set([makeCursor({ x: 0.5, y: 0.5 })]);
     fixture.detectChanges();
     expect((fixture.nativeElement.querySelector('.cursor') as HTMLElement).style.transform).toBe('translate(400px, 300px)');
 
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      width: 1000, height: 500, left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, toJSON: () => ({}),
-    } as DOMRect);
-    triggerResize();
+    viewportSignal.set({ width: 1000, height: 500 });
     fixture.detectChanges();
 
     expect((fixture.nativeElement.querySelector('.cursor') as HTMLElement).style.transform).toBe('translate(500px, 250px)');
