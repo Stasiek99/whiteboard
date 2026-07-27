@@ -1,0 +1,33 @@
+:host {
+  display: block;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+}
+
+.cursor {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.arrow {
+  flex: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+}
+
+.nametag {
+  margin-top: 14px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: #fff;
+  font: 500 12px/1.4 system-ui, sans-serif;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}

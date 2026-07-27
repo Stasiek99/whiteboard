@@ -6,9 +6,12 @@ import type {
   CursorEvent,
   CursorPayload,
   DrawEventPayload,
+  UserJoinAck,
   WireDrawAction,
 } from '../models/socket.types';
+import { WhiteboardUser } from '../models/user.model';
 import { SocketService } from './socket.service';
+import { UserService } from './user.service';
 
 vi.mock('socket.io-client', () => ({
   io: vi.fn(),
@@ -22,6 +25,8 @@ type MockSocket = {
   disconnect: ReturnType<typeof vi.fn>;
   connected: boolean;
 };
+
+const localUser: WhiteboardUser = { id: 'local-1', name: 'BraveOtter7', color: '#123456' };
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +51,9 @@ describe('SocketService', () => {
 
     vi.mocked(io).mockReturnValue(mockSocket as any);
 
-    TestBed.configureTestingModule({});
+    TestBed.configureTestingModule({
+      providers: [{ provide: UserService, useValue: { currentUser: localUser } }],
+    });
     service = TestBed.inject(SocketService);
   });
 
@@ -77,12 +84,12 @@ describe('SocketService', () => {
   // ── joinBoard() ───────────────────────────────────────────────────────────
 
   describe('joinBoard()', () => {
-    it('emits user:join when socket is connected', () => {
+    it('emits user:join with the local WhiteboardUser when socket is connected', () => {
       mockSocket.connected = true;
 
       service.joinBoard();
 
-      expect(mockSocket.emit).toHaveBeenCalledWith('user:join');
+      expect(mockSocket.emit).toHaveBeenCalledWith('user:join', localUser, expect.any(Function));
     });
 
     it('does not emit user:join when socket is not connected', () => {
@@ -91,6 +98,17 @@ describe('SocketService', () => {
       service.joinBoard();
 
       expect(mockSocket.emit).not.toHaveBeenCalled();
+    });
+
+    it('populates usersRoster$ from the join ack (replace on each call)', async () => {
+      mockSocket.connected = true;
+      const roster: WhiteboardUser[] = [{ id: 'peer-1', name: 'SlyLynx2', color: '#abcdef' }];
+      mockSocket.emit.mockImplementation((_ev: string, _u: unknown, ack: (r: UserJoinAck) => void) => ack({ users: roster }));
+
+      const received = firstValueFrom(service.usersRoster$);
+      service.joinBoard();
+
+      expect(await received).toEqual(roster);
     });
   });
 
@@ -102,7 +120,7 @@ describe('SocketService', () => {
 
       getHandler('connect')();
 
-      expect(mockSocket.emit).toHaveBeenCalledWith('user:join');
+      expect(mockSocket.emit).toHaveBeenCalledWith('user:join', localUser, expect.any(Function));
     });
 
     it('re-calls joinBoard() on every subsequent connect — covers reconnect re-seed', () => {
@@ -112,8 +130,8 @@ describe('SocketService', () => {
       getHandler('connect')();
 
       expect(mockSocket.emit).toHaveBeenCalledTimes(2);
-      expect(mockSocket.emit).toHaveBeenNthCalledWith(1, 'user:join');
-      expect(mockSocket.emit).toHaveBeenNthCalledWith(2, 'user:join');
+      expect(mockSocket.emit).toHaveBeenNthCalledWith(1, 'user:join', localUser, expect.any(Function));
+      expect(mockSocket.emit).toHaveBeenNthCalledWith(2, 'user:join', localUser, expect.any(Function));
     });
 
     it('does not emit user:join when socket.connected is false at fire time', () => {
@@ -169,11 +187,12 @@ describe('SocketService', () => {
   });
 
   describe('userJoined$', () => {
-    it('emits the userId of the newly joined peer', async () => {
+    it('emits the WhiteboardUser of the newly joined peer', async () => {
+      const peer: WhiteboardUser = { id: 'peer-abc', name: 'QuietFox1', color: '#ff0000' };
       const received = firstValueFrom(service.userJoined$);
-      getHandler('user:joined')('peer-abc');
+      getHandler('user:joined')(peer);
 
-      expect(await received).toBe('peer-abc');
+      expect(await received).toEqual(peer);
     });
   });
 
