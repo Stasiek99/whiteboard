@@ -68,7 +68,7 @@ describe('RemoteUsersService', () => {
       userJoined$.next(bob);
       cursorMove$.next({ userId: 'bob', x: 0.2, y: 0.3 });
 
-      expect(service.cursors()).toEqual([{ ...bob, x: 0.2, y: 0.3 }]);
+      expect(service.cursors()).toEqual([{ ...bob, x: 0.2, y: 0.3, hidden: false }]);
     });
   });
 
@@ -100,7 +100,7 @@ describe('RemoteUsersService', () => {
       cursorMove$.next({ userId: 'alice', x: 0.1, y: 0.1 });
       cursorMove$.next({ userId: 'alice', x: 0.9, y: 0.9 });
 
-      expect(service.cursors()).toEqual([{ ...alice, x: 0.9, y: 0.9 }]);
+      expect(service.cursors()).toEqual([{ ...alice, x: 0.9, y: 0.9, hidden: false }]);
     });
 
     it('tracks multiple remote users independently', () => {
@@ -113,6 +113,90 @@ describe('RemoteUsersService', () => {
       expect(cursors).toHaveLength(2);
       expect(cursors.find((c) => c.id === 'alice')).toMatchObject({ x: 0.1, y: 0.1 });
       expect(cursors.find((c) => c.id === 'bob')).toMatchObject({ x: 0.8, y: 0.8 });
+    });
+  });
+
+  // ── idle-hide (debounceTime per user stream) ─────────────────────────────
+
+  describe('idle-hide after 3s inactivity', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const cursorFor = (userId: string) => service.cursors().find((c) => c.id === userId);
+
+    it('is visible immediately after a cursor move', () => {
+      userJoined$.next(alice);
+      cursorMove$.next({ userId: 'alice', x: 0.5, y: 0.5 });
+
+      expect(cursorFor('alice')?.hidden).toBe(false);
+    });
+
+    it('flips hidden to true after 3s of no further moves — element stays in the array', () => {
+      userJoined$.next(alice);
+      cursorMove$.next({ userId: 'alice', x: 0.5, y: 0.5 });
+
+      vi.advanceTimersByTime(3000);
+
+      expect(cursorFor('alice')).toMatchObject({ hidden: true, x: 0.5, y: 0.5 });
+    });
+
+    it('does not hide before the 3s window elapses', () => {
+      userJoined$.next(alice);
+      cursorMove$.next({ userId: 'alice', x: 0.5, y: 0.5 });
+
+      vi.advanceTimersByTime(2999);
+
+      expect(cursorFor('alice')?.hidden).toBe(false);
+    });
+
+    it('resets the idle timer on every move — no hide while actively moving', () => {
+      userJoined$.next(alice);
+      cursorMove$.next({ userId: 'alice', x: 0.1, y: 0.1 });
+      vi.advanceTimersByTime(2000);
+      cursorMove$.next({ userId: 'alice', x: 0.2, y: 0.2 });
+      vi.advanceTimersByTime(2000);
+
+      expect(cursorFor('alice')?.hidden).toBe(false);
+    });
+
+    it('reappears (hidden: false) on the next move after being hidden', () => {
+      userJoined$.next(alice);
+      cursorMove$.next({ userId: 'alice', x: 0.5, y: 0.5 });
+      vi.advanceTimersByTime(3000);
+      expect(cursorFor('alice')?.hidden).toBe(true);
+
+      cursorMove$.next({ userId: 'alice', x: 0.6, y: 0.6 });
+
+      expect(cursorFor('alice')).toMatchObject({ hidden: false, x: 0.6, y: 0.6 });
+    });
+
+    it('tracks idle timers per user independently', () => {
+      userJoined$.next(alice);
+      userJoined$.next(bob);
+      cursorMove$.next({ userId: 'alice', x: 0.1, y: 0.1 });
+      vi.advanceTimersByTime(2000);
+      cursorMove$.next({ userId: 'bob', x: 0.8, y: 0.8 });
+      vi.advanceTimersByTime(1000); // alice at 3000ms idle, bob at 1000ms idle
+
+      expect(cursorFor('alice')?.hidden).toBe(true);
+      expect(cursorFor('bob')?.hidden).toBe(false);
+    });
+
+    it('does not throw when a user leaves while an idle timer is pending', () => {
+      userJoined$.next(alice);
+      cursorMove$.next({ userId: 'alice', x: 0.5, y: 0.5 });
+
+      expect(() => {
+        userLeft$.next('alice');
+        vi.advanceTimersByTime(3000);
+      }).not.toThrow();
+
+      expect(service.cursors()).toEqual([]);
     });
   });
 });
