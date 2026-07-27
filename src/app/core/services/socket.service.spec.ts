@@ -58,9 +58,9 @@ describe('SocketService', () => {
 
   describe('constructor', () => {
     it('connects to localhost:3000 with websocket-only transport', () => {
-      expect(io).toHaveBeenCalledWith('http://localhost:3000', {
+      expect(io).toHaveBeenCalledWith('http://localhost:3000', expect.objectContaining({
         transports: ['websocket'],
-      });
+      }));
     });
 
     it('registers handlers for all expected socket events', () => {

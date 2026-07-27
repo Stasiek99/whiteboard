@@ -8,6 +8,7 @@ import {
   ViewChild,
   computed,
   inject,
+  isDevMode,
 } from '@angular/core';
 import { Subject, Subscription } from 'rxjs';
 import { auditTime } from 'rxjs/operators';
@@ -203,6 +204,7 @@ export class CanvasComponent implements OnInit, OnDestroy {
     this.inProgress = null;
     this.clearOverlay();
 
+    if (isDevMode()) console.count('draw:emit');
     this.zone.run(() => this.service.addAction(committed));
   }
 

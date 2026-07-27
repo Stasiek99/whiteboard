@@ -1,4 +1,4 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, isDevMode, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BehaviorSubject } from 'rxjs';
 import { ClearAction, DrawAction, EraseAction, Point, ShapeAction, StrokeAction } from '../../core/models/action.model';
@@ -16,6 +16,7 @@ export class WhiteboardService {
   readonly strokeWidth$ = signal<number>(4);
 
   constructor(private readonly socketService: SocketService) {
+    if (isDevMode()) (window as any).__e2e_whiteboard = this;
     socketService.boardState$
       .pipe(takeUntilDestroyed())
       .subscribe((state) => this.seedFromBoardState(state));
