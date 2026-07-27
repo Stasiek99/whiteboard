@@ -76,6 +76,19 @@ export function createApp(
     { cors: { origin: clientOrigin, methods: ['GET', 'POST'] }, pingTimeout, pingInterval },
   );
 
+  app.get('/debug/rooms', (_req, res) => {
+    const rooms: Record<string, string[]> = {};
+    for (const [id, sockets] of io.sockets.adapter.rooms.entries()) {
+      if (!io.sockets.sockets.has(id)) rooms[id] = [...sockets];
+    }
+    res.json({ rooms, connected: io.sockets.sockets.size });
+  });
+
+  app.get('/debug/board/:boardId', (req, res) => {
+    const board = boards.get(req.params['boardId']);
+    res.json(board ?? { seq: 0, log: [] });
+  });
+
   io.on('connection', (socket) => {
     const boardId =
       typeof socket.handshake.query['boardId'] === 'string'

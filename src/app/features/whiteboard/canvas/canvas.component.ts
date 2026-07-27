@@ -8,8 +8,10 @@ import {
   ViewChild,
   computed,
   inject,
+  isDevMode,
 } from '@angular/core';
-import { Subscription } from 'rxjs';
+import { Subject, Subscription } from 'rxjs';
+import { auditTime } from 'rxjs/operators';
 import { DrawAction, EraseAction, Point, ShapeAction, StrokeAction } from '../../../core/models/action.model';
 import { WhiteboardService } from '../whiteboard.service';
 import { CanvasEngine } from './canvas.engine';
@@ -43,6 +45,8 @@ export class CanvasComponent implements OnInit, OnDestroy {
   private rafId = 0;
   private resizeObserver!: ResizeObserver;
   private actionsSub!: Subscription;
+  private cursorSub!: Subscription;
+  private readonly cursorMove$ = new Subject<Point>();
   private readonly unlisten: Array<() => void> = [];
 
   ngOnInit(): void {
@@ -60,12 +64,20 @@ export class CanvasComponent implements OnInit, OnDestroy {
     this.actionsSub = this.service.actions$.subscribe(actions => {
       this.mainEngine.renderAll(actions);
     });
+
+    this.zone.runOutsideAngular(() => {
+      this.cursorSub = this.cursorMove$
+        .pipe(auditTime(33))
+        .subscribe(pt => this.service.emitCursor(pt));
+    });
   }
 
   ngOnDestroy(): void {
-    this.actionsSub.unsubscribe();
+    this.actionsSub?.unsubscribe();
+    this.cursorSub?.unsubscribe();
+    this.cursorMove$.complete();
     cancelAnimationFrame(this.rafId);
-    this.resizeObserver.disconnect();
+    this.resizeObserver?.disconnect();
     this.unlisten.forEach(fn => fn());
   }
 
@@ -152,6 +164,7 @@ export class CanvasComponent implements OnInit, OnDestroy {
   private onPointerMove(e: PointerEvent): void {
     const pt = this.mainEngine.getPoint(e, this.mainRef.nativeElement);
     this.cursorPoint = pt;
+    this.cursorMove$.next(pt);
 
     if (!this.inProgress) {
       if (this.service.tool$() === 'eraser') this.dirty = true;
@@ -191,6 +204,7 @@ export class CanvasComponent implements OnInit, OnDestroy {
     this.inProgress = null;
     this.clearOverlay();
 
+    if (isDevMode()) console.count('draw:emit');
     this.zone.run(() => this.service.addAction(committed));
   }
 

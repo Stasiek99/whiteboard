@@ -1,4 +1,6 @@
-export interface Point {
+/** Wire types shared between client and server for Socket.IO communication. */
+
+export interface WirePoint {
   x: number;
   y: number;
 }
@@ -6,7 +8,7 @@ export interface Point {
 export interface WireStrokePayload {
   type: 'stroke';
   strokeId: string;
-  points: Point[];
+  points: WirePoint[];
   color: string;
   lineWidth: number;
 }
@@ -14,7 +16,7 @@ export interface WireStrokePayload {
 export interface WireErasePayload {
   type: 'erase';
   strokeId: string;
-  points: Point[];
+  points: WirePoint[];
   lineWidth: number;
 }
 
@@ -22,8 +24,8 @@ export interface WireShapePayload {
   type: 'shape';
   strokeId: string;
   shape: 'rect' | 'ellipse';
-  from: Point;
-  to: Point;
+  from: WirePoint;
+  to: WirePoint;
   color: string;
   lineWidth: number;
   filled: boolean;
@@ -34,15 +36,15 @@ export interface WireClearPayload {
   strokeId: string;
 }
 
-/** What the client sends — server stamps userId and seq */
+/** Payload the client sends — server stamps userId and seq. */
 export type DrawEventPayload =
   | WireStrokePayload
   | WireErasePayload
   | WireShapePayload
   | WireClearPayload;
 
-/** What gets stored in the log and broadcast to peers */
-export type DrawAction = DrawEventPayload & { userId: string; seq: number };
+/** Broadcast-ready action with server-assigned userId and sequence number. */
+export type WireDrawAction = DrawEventPayload & { userId: string; seq: number };
 
 export interface DrawActionAck {
   seq: number;
@@ -50,7 +52,7 @@ export interface DrawActionAck {
 
 export interface BoardState {
   seq: number;
-  log: DrawAction[];
+  log: WireDrawAction[];
 }
 
 export interface CursorEvent {
@@ -59,11 +61,11 @@ export interface CursorEvent {
   userId: string;
 }
 
-/** What the client sends — server stamps userId */
+/** Payload the client sends — server stamps userId. */
 export type CursorPayload = Omit<CursorEvent, 'userId'>;
 
 export interface ServerToClientEvents {
-  'draw:action': (action: DrawAction) => void;
+  'draw:action': (action: WireDrawAction) => void;
   'draw:cursor': (event: CursorEvent) => void;
   'board:state': (state: BoardState) => void;
   'user:joined': (userId: string) => void;
@@ -74,13 +76,4 @@ export interface ClientToServerEvents {
   'draw:action': (payload: DrawEventPayload, ack: (res: DrawActionAck) => void) => void;
   'draw:cursor': (payload: CursorPayload) => void;
   'user:join': () => void;
-}
-
-export interface InterServerEvents {
-  ping: () => void;
-}
-
-export interface SocketData {
-  userId: string;
-  boardId: string;
 }
