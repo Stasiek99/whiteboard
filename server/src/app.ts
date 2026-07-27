@@ -141,7 +141,9 @@ export function createApp(
     });
 
     socket.on('draw:cursor', (payload) => {
-      const cursor: CursorEvent = { ...payload, userId: socket.id };
+      // Stamp with the app-level identity (matches user:joined), not socket.id —
+      // RemoteUsersService keys its identity map by WhiteboardUser.id.
+      const cursor: CursorEvent = { ...payload, userId: socket.data.user?.id ?? socket.id };
       getBoardCursors(boardId).set(socket.id, cursor);
       socket.to(boardId).emit('draw:cursor', cursor);
     });
@@ -149,7 +151,7 @@ export function createApp(
     socket.on('disconnect', () => {
       getBoardCursors(boardId).delete(socket.id);
       getBoardUsers(boardId).delete(socket.id);
-      socket.to(boardId).emit('user:left', socket.id);
+      socket.to(boardId).emit('user:left', socket.data.user?.id ?? socket.id);
       if (!io.sockets.adapter.rooms.has(boardId)) {
         scheduleRoomCleanup(boardId);
       }
