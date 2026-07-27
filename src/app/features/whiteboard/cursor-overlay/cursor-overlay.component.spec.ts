@@ -16,8 +16,21 @@ const makeCursor = (overrides: Partial<RemoteCursor> = {}): RemoteCursor => ({
 describe('CursorOverlayComponent', () => {
   let fixture: ComponentFixture<CursorOverlayComponent>;
   let cursorsSignal: ReturnType<typeof signal<RemoteCursor[]>>;
+  let triggerResize: () => void;
 
   beforeEach(async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 800, height: 600, left: 0, top: 0, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect);
+
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) {
+        triggerResize = callback;
+      }
+      observe = vi.fn();
+      disconnect = vi.fn();
+    });
+
     cursorsSignal = signal<RemoteCursor[]>([]);
 
     await TestBed.configureTestingModule({
@@ -32,6 +45,11 @@ describe('CursorOverlayComponent', () => {
 
     fixture = TestBed.createComponent(CursorOverlayComponent);
     fixture.detectChanges();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('renders no cursor elements when there are no remote users', () => {
@@ -72,13 +90,39 @@ describe('CursorOverlayComponent', () => {
     expect(nametag.style.background).toBe('rgb(255, 0, 0)');
   });
 
-  it('positions each cursor using normalized coordinates as percentages', () => {
+  it('positions each cursor by projecting normalized coordinates onto the overlay box in pixels', () => {
+    // Overlay box is mocked to 800x600 — x=0.25 → 200px, y=0.75 → 450px.
     cursorsSignal.set([makeCursor({ x: 0.25, y: 0.75 })]);
     fixture.detectChanges();
 
     const cursor = fixture.nativeElement.querySelector('.cursor') as HTMLElement;
-    expect(cursor.style.left).toBe('25%');
-    expect(cursor.style.top).toBe('75%');
+    expect(cursor.style.transform).toBe('translate(200px, 450px)');
+  });
+
+  it('re-projects to new pixel coordinates when the overlay box is resized', () => {
+    cursorsSignal.set([makeCursor({ x: 0.5, y: 0.5 })]);
+    fixture.detectChanges();
+    expect((fixture.nativeElement.querySelector('.cursor') as HTMLElement).style.transform).toBe('translate(400px, 300px)');
+
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 1000, height: 500, left: 0, top: 0, right: 1000, bottom: 500, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect);
+    triggerResize();
+    fixture.detectChanges();
+
+    expect((fixture.nativeElement.querySelector('.cursor') as HTMLElement).style.transform).toBe('translate(500px, 250px)');
+  });
+
+  it('declares a transform transition on .cursor for smooth movement, not left/top', () => {
+    // jsdom's computed-style resolution doesn't parse the `transition` shorthand
+    // reliably, so assert against the injected component stylesheet directly.
+    const styleText = Array.from(document.querySelectorAll('style'))
+      .map((el) => el.textContent ?? '')
+      .join('\n');
+
+    const cursorRule = styleText.match(/\.cursor(?:\[[^\]]*])?\s*\{([^}]*)}/);
+    expect(cursorRule).toBeTruthy();
+    expect(cursorRule![1]).toMatch(/transition:\s*transform\s+80ms\s+linear/);
   });
 
   it('re-renders when the cursors signal updates (join/leave)', () => {

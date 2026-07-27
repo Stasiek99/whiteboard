@@ -2,8 +2,7 @@
   @for (cursor of remoteUsers.cursors(); track cursor.id) {
     <div
       class="cursor"
-      [style.left.%]="cursor.x * 100"
-      [style.top.%]="cursor.y * 100"
+      [style.transform]="'translate(' + cursor.x * width() + 'px, ' + cursor.y * height() + 'px)'"
       [style.visibility]="cursor.hidden ? 'hidden' : 'visible'"
     >
       <svg class="arrow" width="20" height="20" viewBox="0 0 20 20" [style.fill]="cursor.color">
