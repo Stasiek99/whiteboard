@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { EMPTY, Subject } from 'rxjs';
-import { BoardState, DrawEventPayload, WireDrawAction } from './core/models/socket.types';
+import { BoardState, CursorEvent, DrawEventPayload, WireDrawAction } from './core/models/socket.types';
+import { WhiteboardUser } from './core/models/user.model';
 import { SocketService } from './core/services/socket.service';
 import { App } from './app';
 
@@ -67,6 +68,10 @@ describe('App', () => {
           useValue: {
             boardState$: new Subject<BoardState>().asObservable(),
             drawAction$: new Subject<WireDrawAction>().asObservable(),
+            cursorMove$: new Subject<CursorEvent>().asObservable(),
+            userJoined$: new Subject<WhiteboardUser>().asObservable(),
+            userLeft$: new Subject<string>().asObservable(),
+            usersRoster$: new Subject<WhiteboardUser[]>().asObservable(),
             emitAction: (_p: DrawEventPayload) => EMPTY,
             emitCursor: () => {},
             joinBoard: () => {},
@@ -88,11 +93,12 @@ describe('App', () => {
     expect(fixture.componentInstance).toBeTruthy();
   });
 
-  it('renders both the canvas and toolbar child components', () => {
+  it('renders the canvas, cursor overlay, and toolbar child components', () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
     const el = fixture.nativeElement as HTMLElement;
     expect(el.querySelector('app-canvas')).toBeTruthy();
+    expect(el.querySelector('app-cursor-overlay')).toBeTruthy();
     expect(el.querySelector('app-toolbar')).toBeTruthy();
   });
 });

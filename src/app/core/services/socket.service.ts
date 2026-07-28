@@ -1,6 +1,7 @@
 import { Injectable, OnDestroy, isDevMode } from '@angular/core';
 import { Observable, Subject } from 'rxjs';
 import { io, Socket } from 'socket.io-client';
+import { WhiteboardUser } from '../models/user.model';
 import {
   BoardState,
   ClientToServerEvents,
@@ -11,6 +12,7 @@ import {
   ServerToClientEvents,
   WireDrawAction,
 } from '../models/socket.types';
+import { UserService } from './user.service';
 
 @Injectable({ providedIn: 'root' })
 export class SocketService implements OnDestroy {
@@ -19,16 +21,19 @@ export class SocketService implements OnDestroy {
   private readonly _drawAction$ = new Subject<WireDrawAction>();
   private readonly _cursorMove$ = new Subject<CursorEvent>();
   private readonly _boardState$ = new Subject<BoardState>();
-  private readonly _userJoined$ = new Subject<string>();
+  private readonly _userJoined$ = new Subject<WhiteboardUser>();
   private readonly _userLeft$ = new Subject<string>();
+  private readonly _usersRoster$ = new Subject<WhiteboardUser[]>();
 
   readonly drawAction$ = this._drawAction$.asObservable();
   readonly cursorMove$ = this._cursorMove$.asObservable();
   readonly boardState$ = this._boardState$.asObservable();
   readonly userJoined$ = this._userJoined$.asObservable();
   readonly userLeft$ = this._userLeft$.asObservable();
+  /** Roster of already-connected peers, replayed (replace, not append) on every join/reconnect. */
+  readonly usersRoster$ = this._usersRoster$.asObservable();
 
-  constructor() {
+  constructor(private readonly userService: UserService) {
     const boardId = new URLSearchParams(window.location.search).get('boardId') ?? 'main';
     this.socket = io('http://localhost:3000', { transports: ['websocket'], query: { boardId } });
 
@@ -55,13 +60,15 @@ export class SocketService implements OnDestroy {
     });
     this.socket.on('draw:cursor', (event) => this._cursorMove$.next(event));
     this.socket.on('board:state', (state) => this._boardState$.next(state));
-    this.socket.on('user:joined', (userId) => this._userJoined$.next(userId));
+    this.socket.on('user:joined', (user) => this._userJoined$.next(user));
     this.socket.on('user:left', (userId) => this._userLeft$.next(userId));
   }
 
   joinBoard(): void {
     if (this.socket.connected) {
-      this.socket.emit('user:join');
+      this.socket.emit('user:join', this.userService.currentUser, (res) => {
+        this._usersRoster$.next(res.users);
+      });
     }
   }
 

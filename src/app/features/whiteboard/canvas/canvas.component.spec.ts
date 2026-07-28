@@ -1,5 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
+import { CanvasViewportService } from '../../../core/services/canvas-viewport.service';
 import { WhiteboardService } from '../whiteboard.service';
 import { CanvasComponent } from './canvas.component';
 
@@ -365,6 +366,27 @@ describe('CanvasComponent', () => {
       vi.advanceTimersByTime(100);
 
       expect(emitCursorSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── Test 11: CanvasViewportService publishing ────────────────────────────
+
+  describe('CanvasViewportService publishing', () => {
+    it('publishes the canvas element\'s box on init', () => {
+      const viewport = TestBed.inject(CanvasViewportService);
+      expect(viewport.size()).toEqual({ width: 800, height: 600 });
+    });
+
+    it('re-publishes the canvas element\'s box on resize', () => {
+      const viewport = TestBed.inject(CanvasViewportService);
+
+      vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockReturnValue(
+        { left: 0, top: 0, width: 1024, height: 768, right: 1024, bottom: 768, x: 0, y: 0, toJSON: () => ({}) } as DOMRect,
+      );
+
+      resizeCallback([], new ResizeObserver(() => {}));
+
+      expect(viewport.size()).toEqual({ width: 1024, height: 768 });
     });
   });
 

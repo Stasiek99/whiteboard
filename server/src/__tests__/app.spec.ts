@@ -3,7 +3,7 @@ import request from 'supertest';
 import type { AddressInfo } from 'net';
 import { io as ioClient, type Socket as ClientSocket } from 'socket.io-client';
 import { createApp } from '../app';
-import type { BoardState, DrawAction, DrawActionAck, DrawEventPayload, CursorEvent, CursorPayload } from '../types';
+import type { BoardState, DrawAction, DrawActionAck, DrawEventPayload, CursorEvent, CursorPayload, WhiteboardUser, UserJoinAck } from '../types';
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -70,7 +70,7 @@ describe('Socket.io', () => {
 
   afterEach(() => teardown());
 
-  function connect(boardId = 'main'): Promise<ClientSocket> {
+  function connect(boardId = 'main', user?: WhiteboardUser): Promise<ClientSocket> {
     return new Promise<ClientSocket>((resolve, reject) => {
       const client = ioClient(`http://localhost:${port}`, {
         query: { boardId },
@@ -81,9 +81,16 @@ describe('Socket.io', () => {
         // Resolve only after board:state is consumed so the socket is clean
         // for any board:state listeners the test may register afterwards.
         client.once('board:state', () => resolve(client));
-        client.emit('user:join');
+        if (user) client.emit('user:join', user);
+        else client.emit('user:join');
       });
       client.once('connect_error', reject);
+    });
+  }
+
+  function joinWithAck(client: ClientSocket, user?: WhiteboardUser): Promise<UserJoinAck> {
+    return new Promise<UserJoinAck>((resolve) => {
+      client.emit('user:join', user, resolve);
     });
   }
 
@@ -144,12 +151,12 @@ describe('Socket.io', () => {
 
   it('emits user:joined to existing clients when a new socket connects', async () => {
     const first = await connect();
-    const joinedPromise = waitFor<string>(first, 'user:joined');
+    const joinedPromise = waitFor<WhiteboardUser>(first, 'user:joined');
 
     const second = await connect();
-    const joinedId = await joinedPromise;
+    const joinedUser = await joinedPromise;
 
-    expect(joinedId).toBe(second.id);
+    expect(joinedUser.id).toBe(second.id);
   });
 
   it('emits user:left to remaining clients when a socket disconnects', async () => {
@@ -163,6 +170,65 @@ describe('Socket.io', () => {
     const leftId = await leftPromise;
 
     expect(leftId).toBe(leaverId);
+  });
+
+  // ── identity broadcast (WhiteboardUser) ──────────────────────────────────
+
+  it('broadcasts the WhiteboardUser payload sent with user:join, not just the socket id', async () => {
+    const first = await connect();
+    const joinedPromise = waitFor<WhiteboardUser>(first, 'user:joined');
+
+    const secondUser: WhiteboardUser = { id: 'client-chosen-id', name: 'BraveOtter7', color: '#ff0000' };
+    await connect('main', secondUser);
+    const joinedUser = await joinedPromise;
+
+    expect(joinedUser).toMatchObject({ name: 'BraveOtter7', color: '#ff0000' });
+  });
+
+  it('falls back to an anonymous identity when user:join is emitted with no payload', async () => {
+    const first = await connect();
+    const joinedPromise = waitFor<WhiteboardUser>(first, 'user:joined');
+
+    const second = await connect(); // uses bare emit('user:join') with no user
+    const joinedUser = await joinedPromise;
+
+    expect(joinedUser.id).toBe(second.id);
+    expect(joinedUser.name).toBeTruthy();
+    expect(joinedUser.color).toBeTruthy();
+  });
+
+  it('acks user:join with the roster of already-connected peers, excluding self', async () => {
+    const firstUser: WhiteboardUser = { id: 'u1', name: 'QuietFox1', color: '#111111' };
+    const secondUser: WhiteboardUser = { id: 'u2', name: 'SlyLynx2', color: '#222222' };
+
+    await connect('main', firstUser);
+    await connect('main', secondUser);
+
+    const thirdUser: WhiteboardUser = { id: 'u3', name: 'JollyOwl3', color: '#333333' };
+    const third = await connectRaw();
+    const ack = await joinWithAck(third, thirdUser);
+
+    expect(ack.users).toHaveLength(2);
+    expect(ack.users.map((u) => u.name).sort()).toEqual(['QuietFox1', 'SlyLynx2']);
+  });
+
+  it('roster ack is empty for the very first client on a board', async () => {
+    const only = await connectRaw();
+    const ack = await joinWithAck(only, { id: 'solo', name: 'CalmYak9', color: '#444444' });
+
+    expect(ack.users).toEqual([]);
+  });
+
+  it('does not include a departed user in a later roster ack', async () => {
+    const leaverUser: WhiteboardUser = { id: 'leaver', name: 'MightyBadger5', color: '#555555' };
+    const leaver = await connect('main', leaverUser);
+    leaver.disconnect();
+    await new Promise((r) => setTimeout(r, 80));
+
+    const joiner = await connectRaw();
+    const ack = await joinWithAck(joiner, { id: 'joiner', name: 'EagerRaven6', color: '#666666' });
+
+    expect(ack.users.find((u) => u.name === 'MightyBadger5')).toBeUndefined();
   });
 
   // ── draw:action relay ────────────────────────────────────────────────────

@@ -13,6 +13,7 @@ import {
 import { Subject, Subscription } from 'rxjs';
 import { auditTime } from 'rxjs/operators';
 import { DrawAction, EraseAction, Point, ShapeAction, StrokeAction } from '../../../core/models/action.model';
+import { CanvasViewportService } from '../../../core/services/canvas-viewport.service';
 import { WhiteboardService } from '../whiteboard.service';
 import { CanvasEngine } from './canvas.engine';
 
@@ -33,6 +34,7 @@ export class CanvasComponent implements OnInit, OnDestroy {
   private readonly zone = inject(NgZone);
   private readonly service = inject(WhiteboardService);
   private readonly host = inject(ElementRef<HTMLElement>);
+  private readonly viewport = inject(CanvasViewportService);
 
   protected readonly activeTool = computed(() => this.service.tool$());
 
@@ -57,6 +59,7 @@ export class CanvasComponent implements OnInit, OnDestroy {
     this.overlayEngine = new CanvasEngine(overlay.getContext('2d')!);
 
     this.setupDpi();
+    this.publishViewportSize();
     this.bindPointerEvents(main);
     this.startRaf();
     this.observeResize();
@@ -84,6 +87,12 @@ export class CanvasComponent implements OnInit, OnDestroy {
   private setupDpi(): void {
     this.mainEngine.setupDpi(this.mainRef.nativeElement);
     this.overlayEngine.setupDpi(this.overlayRef.nativeElement);
+  }
+
+  /** Publishes the canvas element's own box so remote cursors can be projected onto it. */
+  private publishViewportSize(): void {
+    const rect = this.mainRef.nativeElement.getBoundingClientRect();
+    this.viewport.setSize({ width: rect.width, height: rect.height });
   }
 
   private bindPointerEvents(canvas: HTMLCanvasElement): void {
@@ -125,6 +134,7 @@ export class CanvasComponent implements OnInit, OnDestroy {
     this.zone.runOutsideAngular(() => {
       this.resizeObserver = new ResizeObserver(() => {
         this.setupDpi();
+        this.publishViewportSize();
         this.mainEngine.renderAll(this.service.actions$.getValue());
         this.dirty = true;
       });

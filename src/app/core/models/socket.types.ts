@@ -1,5 +1,7 @@
 /** Wire types shared between client and server for Socket.IO communication. */
 
+import { WhiteboardUser } from './user.model';
+
 export interface WirePoint {
   x: number;
   y: number;
@@ -64,16 +66,20 @@ export interface CursorEvent {
 /** Payload the client sends — server stamps userId. */
 export type CursorPayload = Omit<CursorEvent, 'userId'>;
 
+export interface UserJoinAck {
+  users: WhiteboardUser[];
+}
+
 export interface ServerToClientEvents {
   'draw:action': (action: WireDrawAction) => void;
   'draw:cursor': (event: CursorEvent) => void;
   'board:state': (state: BoardState) => void;
-  'user:joined': (userId: string) => void;
+  'user:joined': (user: WhiteboardUser) => void;
   'user:left': (userId: string) => void;
 }
 
 export interface ClientToServerEvents {
   'draw:action': (payload: DrawEventPayload, ack: (res: DrawActionAck) => void) => void;
   'draw:cursor': (payload: CursorPayload) => void;
-  'user:join': () => void;
+  'user:join': (user?: WhiteboardUser, ack?: (res: UserJoinAck) => void) => void;
 }
