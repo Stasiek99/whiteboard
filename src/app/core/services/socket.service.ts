@@ -1,6 +1,7 @@
 import { Injectable, OnDestroy, isDevMode } from '@angular/core';
 import { Observable, Subject } from 'rxjs';
 import { io, Socket } from 'socket.io-client';
+import { environment } from '../../../environments/environment';
 import { WhiteboardUser } from '../models/user.model';
 import {
   BoardState,
@@ -35,7 +36,7 @@ export class SocketService implements OnDestroy {
 
   constructor(private readonly userService: UserService) {
     const boardId = new URLSearchParams(window.location.search).get('boardId') ?? 'main';
-    this.socket = io('http://localhost:3000', { transports: ['websocket'], query: { boardId } });
+    this.socket = io(environment.socketUrl, { transports: ['websocket'], query: { boardId } });
 
     if (isDevMode()) {
       (window as any).__e2e_socket = this.socket;

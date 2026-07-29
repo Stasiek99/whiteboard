@@ -96,22 +96,21 @@ export class CanvasComponent implements OnInit, OnDestroy {
   }
 
   private bindPointerEvents(canvas: HTMLCanvasElement): void {
-    const onDown = (e: PointerEvent) => this.onPointerDown(e);
-    canvas.addEventListener('pointerdown', onDown);
-    this.unlisten.push(() => canvas.removeEventListener('pointerdown', onDown));
-
     this.zone.runOutsideAngular(() => {
+      const onDown = (e: PointerEvent) => this.onPointerDown(e);
       const onMove = (e: PointerEvent) => this.onPointerMove(e);
       const onUp = (e: PointerEvent) => this.onPointerUp(e);
       const onCancel = (e: PointerEvent) => this.onPointerCancel(e);
       const onLeave = () => { this.cursorPoint = null; this.dirty = true; };
 
+      canvas.addEventListener('pointerdown', onDown);
       canvas.addEventListener('pointermove', onMove);
       canvas.addEventListener('pointerup', onUp);
       canvas.addEventListener('pointercancel', onCancel);
       canvas.addEventListener('pointerleave', onLeave);
 
       this.unlisten.push(
+        () => canvas.removeEventListener('pointerdown', onDown),
         () => canvas.removeEventListener('pointermove', onMove),
         () => canvas.removeEventListener('pointerup', onUp),
         () => canvas.removeEventListener('pointercancel', onCancel),
